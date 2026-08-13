@@ -12,7 +12,7 @@ import (
 	"github.com/wenn-id/devparity/internal/model"
 )
 
-type CommandFunc func(context.Context, string, []string) ([]byte, []byte, int, error)
+type CommandFunc func(context.Context, string, []string, int64) ([]byte, []byte, int, error)
 
 var (
 	lookPath                = exec.LookPath
@@ -70,10 +70,13 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	if opts.Timeout <= 0 {
 		opts.Timeout = defaultTimeout
 	}
+	if opts.MaxOutput <= 0 {
+		opts.MaxOutput = defaultMaxOutput
+	}
 	commandContext, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 	start := time.Now()
-	stdout, stderr, exit, runErr := commandFunc(commandContext, runtimeName, args)
+	stdout, stderr, exit, runErr := commandFunc(commandContext, runtimeName, args, opts.MaxOutput)
 	if runErr != nil {
 		return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %w", runErr)
 	}
@@ -111,15 +114,22 @@ func containerShell(block model.DocBlock) (string, []string, error) {
 	}
 }
 
-func runCommand(ctx context.Context, name string, args []string) ([]byte, []byte, int, error) {
+func runCommand(ctx context.Context, name string, args []string, maxOutput int64) ([]byte, []byte, int, error) {
+	if maxOutput <= 0 {
+		maxOutput = defaultMaxOutput
+	}
 	command := exec.CommandContext(ctx, name, args...)
-	stdout, err := command.Output()
+	stdout := &cappedWriter{max: maxOutput}
+	stderr := &cappedWriter{max: maxOutput}
+	command.Stdout = stdout
+	command.Stderr = stderr
+	err := command.Run()
 	if err == nil {
-		return stdout, nil, 0, nil
+		return stdout.data, stderr.data, 0, nil
 	}
 	var exitError *exec.ExitError
 	if errors.As(err, &exitError) {
-		return stdout, exitError.Stderr, exitError.ExitCode(), nil
+		return stdout.data, stderr.data, exitError.ExitCode(), nil
 	}
-	return stdout, nil, -1, err
+	return stdout.data, stderr.data, -1, err
 }
