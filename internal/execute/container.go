@@ -80,9 +80,8 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	if runErr != nil {
 		return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %w", runErr)
 	}
-	if runtimeFailure(stderr) {
-		return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %s", strings.TrimSpace(string(stderr)))
-	}
+	// The container process exit code is authoritative. Repository commands control
+	// stderr, so its text must never reclassify a successful runtime invocation.
 	result = model.ExecutionResult{BlockID: block.ID, Mode: "container", ExitCode: exit, Duration: time.Since(start).Milliseconds(), Stdout: NewRedactor(nil).Redact(string(stdout)), Stderr: NewRedactor(nil).Redact(string(stderr)), Status: model.StatusPass}
 	if exit != 0 || commandContext.Err() != nil {
 		result.Status = model.StatusFinding
@@ -91,16 +90,6 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 		}
 	}
 	return result, nil
-}
-
-func runtimeFailure(stderr []byte) bool {
-	message := strings.ToLower(string(stderr))
-	for _, marker := range []string{"permission denied", "cannot connect", "failed to connect", "is the docker daemon running", "error during connect", "no matching manifest", "unable to find image"} {
-		if strings.Contains(message, marker) {
-			return true
-		}
-	}
-	return false
 }
 
 func containerShell(block model.DocBlock) (string, []string, error) {

@@ -105,6 +105,22 @@ func TestRunCommandPreservesBothStreamsOnFailure(t *testing.T) {
 	}
 }
 
+func TestRunContainerDoesNotClassifyCommandStderrAsRuntimeFailure(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(string) (string, error) { return "/fake/docker", nil }
+	commandFunc = func(_ context.Context, _ string, _ []string, _ int64) ([]byte, []byte, int, error) {
+		return []byte("ok"), []byte("permission denied ghp_abcd1234"), 0, nil
+	}
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "README.md:2", Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusPass || !strings.Contains(result.Stderr, "[REDACTED]") {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
 func TestCommandHelperProcess(t *testing.T) {
 	switch os.Getenv("DEVPARITY_COMMAND_HELPER") {
 	case "large":
@@ -119,21 +135,6 @@ func TestCommandHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.Write([]byte("stdout"))
 		_, _ = os.Stderr.Write([]byte("stderr"))
 		os.Exit(7)
-	}
-}
-
-func TestRuntimeFailureRecognizesUnavailableContainerRuntime(t *testing.T) {
-	for _, stderr := range []string{
-		"failed to connect to the docker API",
-		"no matching manifest for windows/amd64",
-		"Unable to find image 'node:22' locally",
-	} {
-		if !runtimeFailure([]byte(stderr)) {
-			t.Fatalf("runtimeFailure(%q)=false", stderr)
-		}
-	}
-	if runtimeFailure([]byte("npm test failed")) {
-		t.Fatal("ordinary command failure classified as runtime failure")
 	}
 }
 
