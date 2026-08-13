@@ -25,7 +25,7 @@ func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	}
 	var runtimeName string
 	var args []string
-	commandFunc = func(_ context.Context, name string, got []string) ([]byte, []byte, int, error) {
+	commandFunc = func(_ context.Context, name string, got []string, _ int64) ([]byte, []byte, int, error) {
 		runtimeName = name
 		args = append([]string(nil), got...)
 		return []byte("ok"), nil, 0, nil
@@ -58,18 +58,83 @@ func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	}
 }
 
-func TestRuntimeFailureRecognizesUnavailableContainerRuntime(t *testing.T) {
-	for _, stderr := range []string{
-		"failed to connect to the docker API",
-		"no matching manifest for windows/amd64",
-		"Unable to find image 'node:22' locally",
-	} {
-		if !runtimeFailure([]byte(stderr)) {
-			t.Fatalf("runtimeFailure(%q)=false", stderr)
-		}
+func TestRunCommandCapsBothStreams(t *testing.T) {
+	t.Setenv("DEVPARITY_COMMAND_HELPER", "large")
+	stdout, stderr, exit, err := runCommand(context.Background(), os.Args[0], []string{"-test.run=TestCommandHelperProcess"}, defaultMaxOutput)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if runtimeFailure([]byte("npm test failed")) {
-		t.Fatal("ordinary command failure classified as runtime failure")
+	if exit != 0 {
+		t.Fatalf("exit=%d", exit)
+	}
+	if int64(len(stdout)) > defaultMaxOutput || int64(len(stderr)) > defaultMaxOutput {
+		t.Fatalf("stdout=%d stderr=%d limit=%d", len(stdout), len(stderr), defaultMaxOutput)
+	}
+}
+
+func TestRunCommandUsesConfiguredLimit(t *testing.T) {
+	t.Setenv("DEVPARITY_COMMAND_HELPER", "large")
+	stdout, stderr, exit, err := runCommand(context.Background(), os.Args[0], []string{"-test.run=TestCommandHelperProcess"}, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exit != 0 || len(stdout) > 64 || len(stderr) > 64 {
+		t.Fatalf("exit=%d stdout=%d stderr=%d", exit, len(stdout), len(stderr))
+	}
+}
+
+func TestRunCommandPreservesSuccessfulStderr(t *testing.T) {
+	t.Setenv("DEVPARITY_COMMAND_HELPER", "stderr")
+	stdout, stderr, exit, err := runCommand(context.Background(), os.Args[0], []string{"-test.run=TestCommandHelperProcess"}, defaultMaxOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exit != 0 || !strings.Contains(string(stdout), "ok") || !strings.Contains(string(stderr), "warning") {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, stdout, stderr)
+	}
+}
+
+func TestRunCommandPreservesBothStreamsOnFailure(t *testing.T) {
+	t.Setenv("DEVPARITY_COMMAND_HELPER", "failure")
+	stdout, stderr, exit, err := runCommand(context.Background(), os.Args[0], []string{"-test.run=TestCommandHelperProcess"}, defaultMaxOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exit != 7 || !strings.Contains(string(stdout), "stdout") || !strings.Contains(string(stderr), "stderr") {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, stdout, stderr)
+	}
+}
+
+func TestRunContainerDoesNotClassifyCommandStderrAsRuntimeFailure(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(string) (string, error) { return "/fake/docker", nil }
+	commandFunc = func(_ context.Context, _ string, _ []string, _ int64) ([]byte, []byte, int, error) {
+		return []byte("ok"), []byte("permission denied ghp_abcd1234"), 0, nil
+	}
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "README.md:2", Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusPass || !strings.Contains(result.Stderr, "[REDACTED]") {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestCommandHelperProcess(t *testing.T) {
+	switch os.Getenv("DEVPARITY_COMMAND_HELPER") {
+	case "large":
+		_, _ = os.Stdout.Write([]byte(strings.Repeat("o", int(defaultMaxOutput*2))))
+		_, _ = os.Stderr.Write([]byte(strings.Repeat("e", int(defaultMaxOutput*2))))
+		os.Exit(0)
+	case "stderr":
+		_, _ = os.Stdout.Write([]byte("ok"))
+		_, _ = os.Stderr.Write([]byte("warning"))
+		os.Exit(0)
+	case "failure":
+		_, _ = os.Stdout.Write([]byte("stdout"))
+		_, _ = os.Stderr.Write([]byte("stderr"))
+		os.Exit(7)
 	}
 }
 
@@ -78,7 +143,7 @@ func TestRunContainerAllowNetworkRemovesOnlyNetworkRestriction(t *testing.T) {
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	var args []string
-	commandFunc = func(_ context.Context, _ string, got []string) ([]byte, []byte, int, error) {
+	commandFunc = func(_ context.Context, _ string, got []string, _ int64) ([]byte, []byte, int, error) {
 		args = append([]string(nil), got...)
 		return nil, nil, 0, nil
 	}
@@ -106,11 +171,11 @@ func TestLiveContainer(t *testing.T) {
 	}
 	root := t.TempDir()
 	writeWorkspaceFile(t, root, "sentinel", "unchanged")
-	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "live", Shell: "sh", Script: "printf live"}, Options{Root: root, NodeVersion: "22", Timeout: time.Minute})
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "live", Shell: "sh", Script: "head -c 2097152 /dev/zero; printf warning >&2"}, Options{Root: root, NodeVersion: "22", Timeout: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != model.StatusPass || result.Stdout != "live" {
+	if result.Status != model.StatusPass || int64(len(result.Stdout)) > defaultMaxOutput || !strings.Contains(result.Stderr, "warning") {
 		t.Fatalf("result=%#v", result)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "sentinel"))
