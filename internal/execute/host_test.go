@@ -2,7 +2,6 @@ package execute
 
 import (
 	"context"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +22,7 @@ func TestRunHostSuccessUsesMinimalForwardedEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("DEVPARITY_TEST_SECRET", "exact-secret")
-	block := model.DocBlock{ID: "README.md:2", Shell: shellName("sh", "powershell"), Script: shellScript(`printf '%s|%s|%s' "$DEVPARITY_TEST_SECRET" "${DEVPARITY_TEST_ABSENT-}" "${DEVPARITY_NOT_FORWARDED-}"`, `$env:DEVPARITY_TEST_SECRET; Write-Output "$env:DEVPARITY_TEST_SECRET|$env:DEVPARITY_TEST_ABSENT|$env:DEVPARITY_NOT_FORWARDED"`)}
+	block := model.DocBlock{ID: "README.md:2", Shell: "sh", Script: `printf '%s|%s|%s' "$DEVPARITY_TEST_SECRET" "${DEVPARITY_TEST_ABSENT-}" "${DEVPARITY_NOT_FORWARDED-}"`}
 	result, err := RunHost(context.Background(), grant, block, Options{Root: t.TempDir(), EnvNames: []string{"DEVPARITY_TEST_SECRET", "DEVPARITY_TEST_ABSENT"}, Timeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +43,7 @@ func TestRunHostNonzeroExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := RunHost(context.Background(), grant, model.DocBlock{Shell: shellName("sh", "powershell"), Script: shellScript("exit 7", "exit 7")}, Options{Root: t.TempDir(), Timeout: time.Second})
+	result, err := RunHost(context.Background(), grant, model.DocBlock{Shell: "sh", Script: "exit 7"}, Options{Root: t.TempDir(), Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +57,7 @@ func TestRunHostTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := RunHost(context.Background(), grant, model.DocBlock{Shell: shellName("sh", "powershell"), Script: shellScript("sleep 1", "Start-Sleep -Seconds 1")}, Options{Root: t.TempDir(), Timeout: 100 * time.Millisecond})
+	result, err := RunHost(context.Background(), grant, model.DocBlock{Shell: "sh", Script: "sleep 1"}, Options{Root: t.TempDir(), Timeout: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +71,7 @@ func TestRunHostCapsOutputPerStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	block := model.DocBlock{Shell: "sh", Script: shellScript("printf '%*s' 2097152 ''", "Write-Output ('x' * 2097152)")}
+	block := model.DocBlock{Shell: "sh", Script: "printf '%*s' 2097152 ''"}
 	result, err := RunHost(context.Background(), grant, block, Options{Root: t.TempDir(), Timeout: 2 * time.Second, MaxOutput: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
@@ -80,18 +79,4 @@ func TestRunHostCapsOutputPerStream(t *testing.T) {
 	if int64(len(result.Stdout)) > 1<<20 {
 		t.Fatalf("stdout=%d bytes", len(result.Stdout))
 	}
-}
-
-func shellName(unix, windows string) string {
-	if runtime.GOOS == "windows" {
-		return "powershell"
-	}
-	return unix
-}
-
-func shellScript(unix, windows string) string {
-	if runtime.GOOS == "windows" {
-		return windows
-	}
-	return unix
 }
