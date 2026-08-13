@@ -43,7 +43,7 @@ func TestActionHasSafeCompositeInputs(t *testing.T) {
 	}
 }
 
-func TestReleaseEmbedsVersionAndVerifiesAsset(t *testing.T) {
+func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,27 @@ func TestReleaseEmbedsVersionAndVerifiesAsset(t *testing.T) {
 	if strings.Contains(text, "-X github.com/devparity/devparity/internal/cli.Version=") {
 		t.Fatal("release workflow still uses the old module path for Version")
 	}
+	if !strings.Contains(text, "assets=(") {
+		t.Fatal("release workflow does not collect release assets for validation")
+	}
+	for _, asset := range []string{
+		"devparity-linux-amd64",
+		"devparity-linux-arm64",
+		"devparity-darwin-amd64",
+		"devparity-darwin-arm64",
+		"devparity-windows-amd64.exe",
+	} {
+		if !strings.Contains(text, asset) {
+			t.Fatalf("release workflow does not include asset %q", asset)
+		}
+	}
+	if !strings.Contains(text, `for asset in "${assets[@]}"; do`) {
+		t.Fatal("release workflow does not verify every release asset")
+	}
+	if !strings.Contains(text, `grep -a -F -- "$VERSION" "dist/$asset" >/dev/null`) {
+		t.Fatal("release workflow does not verify each asset's embedded version")
+	}
 	if !strings.Contains(text, `test "$(./dist/devparity-linux-amd64 version)" = "$VERSION"`) {
-		t.Fatal("release workflow does not verify the embedded version")
+		t.Fatal("release workflow does not execute a release asset to verify its version")
 	}
 }
