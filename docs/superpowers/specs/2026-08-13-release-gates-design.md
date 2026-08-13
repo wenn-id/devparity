@@ -26,23 +26,28 @@ Change `.github/workflows/ci.yml` into a thin push/pull-request trigger that
 calls `verify.yml`. This preserves the existing CI entry point while ensuring
 normal CI and release verification share the same implementation.
 
-Change `.github/workflows/release.yml` to have two jobs:
+Change `.github/workflows/release.yml` to have three jobs:
 
 1. `verify` calls `verify.yml` on the tag commit.
-2. `publish` runs on Ubuntu with `needs: verify`, has the only
-   `contents: write` permission, builds/verifies assets, and publishes the
-   release.
+2. `package` runs on Ubuntu with `needs: verify`, keeps
+   `contents: read`, checks out the tag commit, builds and verifies all
+   release assets, and uploads them as the `release-assets` artifact.
+3. `publish` runs on Ubuntu with `needs: [verify, package]`, has the only
+   `contents: write` permission, downloads the `release-assets` artifact,
+   and publishes the release without checking out the repository or
+   rebuilding assets.
 
 The release workflow itself keeps `contents: read` at the top level. The
-verification caller job explicitly grants only `contents: read`; the publish
-job explicitly grants `contents: write`. No verification step runs in a job
-that can publish.
+verification caller and package jobs explicitly grant only `contents: read`;
+the publish job explicitly grants `contents: write`. No verification or
+packaging step runs in a job that can publish.
 
 ## Exact-commit behavior
 
-For a tag push, the reusable workflow checks out the tag SHA from the caller's
-event context. The publish job uses the same tag ref and cannot start until all
-matrix and container jobs in `verify` complete successfully.
+For a tag push, the reusable workflow and the `package` job check out the tag
+SHA from the caller's event context. The `publish` job consumes the artifact
+created from that same SHA and cannot start until all matrix and container
+jobs in `verify`, plus packaging, complete successfully.
 
 ## Regression coverage
 
@@ -51,8 +56,11 @@ Extend the workflow contract tests to assert:
 - `verify.yml` is reusable and contains format, vet, test, race, build,
   checksum, and container gates;
 - `ci.yml` calls `verify.yml` for push and pull-request events;
-- `release.yml` calls `verify.yml`, has `publish.needs: verify`, and keeps
-  write permission only on `publish`;
+- `release.yml` calls `verify.yml`, keeps packaging behind `verify`, has
+  `publish.needs: [verify, package]`, and keeps write permission only on
+  `publish`;
+- `package` uploads `release-assets` and `publish` downloads that artifact
+  without checkout or build steps;
 - no verification job or reusable workflow permission requests `contents: write`.
 
 ## Scope
