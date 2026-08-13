@@ -48,7 +48,7 @@ func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	const linkerTarget = "-X github.com/wenn-id/devparity/internal/cli.Version=${VERSION}"
 	if !strings.Contains(text, linkerTarget) {
 		t.Fatalf("release workflow missing linker target %q", linkerTarget)
@@ -56,6 +56,16 @@ func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
 	if strings.Contains(text, "-X github.com/devparity/devparity/internal/cli.Version=") {
 		t.Fatal("release workflow still uses the old module path for Version")
 	}
+	const buildLoopHeader = "for target in \\\n"
+	buildLoopStart := strings.Index(text, buildLoopHeader)
+	if buildLoopStart == -1 {
+		t.Fatal("release workflow does not define the release asset build loop")
+	}
+	buildLoopEnd := strings.Index(text[buildLoopStart:], "\n          done")
+	if buildLoopEnd == -1 {
+		t.Fatal("release workflow release asset build loop is incomplete")
+	}
+	buildLoop := text[buildLoopStart : buildLoopStart+buildLoopEnd]
 	if !strings.Contains(text, "assets=(") {
 		t.Fatal("release workflow does not collect release assets for validation")
 	}
@@ -66,9 +76,12 @@ func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
 		"devparity-darwin-arm64",
 		"devparity-windows-amd64.exe",
 	} {
-		if !strings.Contains(text, asset) {
-			t.Fatalf("release workflow does not include asset %q", asset)
+		if !strings.Contains(buildLoop, "asset="+asset) {
+			t.Fatalf("release workflow build loop does not generate asset %q", asset)
 		}
+	}
+	if !strings.Contains(buildLoop, `assets+=("$asset")`) {
+		t.Fatal("release workflow does not append each built asset for validation")
 	}
 	if !strings.Contains(text, `for asset in "${assets[@]}"; do`) {
 		t.Fatal("release workflow does not verify every release asset")
