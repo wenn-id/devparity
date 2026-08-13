@@ -8,6 +8,12 @@
 
 **Tech Stack:** Bash, GitHub Actions, GNU `sha256sum`, Go contract tests in `internal/cli/action_test.go`.
 
+## Prerequisites
+
+- Go 1.26.5 (or the repository-compatible Go toolchain) is available as `go` on `PATH`.
+- `actionlint` is installed and available as `actionlint` on `PATH`.
+- A POSIX shell with GNU `sha256sum` is available for the checksum smoke test.
+
 ## Global Constraints
 
 - Preserve the five release asset names: `devparity-linux-amd64`, `devparity-linux-arm64`, `devparity-darwin-amd64`, `devparity-darwin-arm64`, and `devparity-windows-amd64.exe`.
@@ -55,7 +61,6 @@ Also assert that the smoke test contains the same manifest command, the same
 Run:
 
 ```powershell
-$env:PATH = 'C:\Users\acer\Documents\Codex\2026-08-13\fu\work\go1.26.5\go\bin;' + $env:PATH
 go test ./internal/cli -run TestReleaseChecksumsUseBasenames -count=1
 ```
 
@@ -145,7 +150,6 @@ temporary directory. Expected: both pass and every asset reports `OK`.
 - [ ] **Step 1: Run formatting and static checks**
 
 ```powershell
-$env:PATH = 'C:\Users\acer\Documents\Codex\2026-08-13\fu\work\go1.26.5\go\bin;C:\Program Files\Git\bin;' + $env:PATH
 gofmt -w internal/cli/action_test.go
 git diff --check
 go vet ./...
@@ -163,7 +167,7 @@ Expected: all packages pass.
 - [ ] **Step 3: Lint the workflows**
 
 ```powershell
-& 'C:\Users\acer\Documents\Codex\2026-08-13\fu\work\go1.26.5\bin\actionlint.exe'
+actionlint
 ```
 
 Expected: no output and exit code 0.

@@ -117,13 +117,27 @@ func TestReleaseChecksumsUseBasenames(t *testing.T) {
 	if !strings.Contains(actionText, verifyCommand) {
 		t.Fatal("action checksum verification no longer expects basename entries")
 	}
-	if !strings.Contains(ciText, "name: Verify release checksum manifest") {
+	const smokeStepName = "        name: Verify release checksum manifest"
+	stepStart := strings.Index(ciText, smokeStepName)
+	if stepStart == -1 {
 		t.Fatal("CI is missing the release checksum smoke test")
 	}
-	if !strings.Contains(ciText, manifestCommand) {
+	runStart := strings.Index(ciText[stepStart:], "        run: |\n")
+	if runStart == -1 {
+		t.Fatal("CI checksum smoke test is missing its run block")
+	}
+	runLines := make([]string, 0)
+	for _, line := range strings.Split(ciText[stepStart+runStart+len("        run: |\n"):], "\n") {
+		if line != "" && len(line)-len(strings.TrimLeft(line, " ")) < 10 {
+			break
+		}
+		runLines = append(runLines, line)
+	}
+	smokeRun := strings.Join(runLines, "\n")
+	if !strings.Contains(smokeRun, manifestCommand) {
 		t.Fatal("CI smoke test does not generate the release manifest command")
 	}
-	if !strings.Contains(ciText, verifyCommand) {
+	if !strings.Contains(smokeRun, verifyCommand) {
 		t.Fatal("CI smoke test does not use the action checksum verification command")
 	}
 	for _, asset := range []string{
@@ -133,7 +147,7 @@ func TestReleaseChecksumsUseBasenames(t *testing.T) {
 		"devparity-darwin-arm64",
 		"devparity-windows-amd64.exe",
 	} {
-		if !strings.Contains(ciText, asset) {
+		if !strings.Contains(smokeRun, asset) {
 			t.Fatalf("CI smoke test does not cover asset %q", asset)
 		}
 	}
