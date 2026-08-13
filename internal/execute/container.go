@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -55,7 +56,11 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	if !opts.AllowNetwork {
 		args = append(args, "--network", "none")
 	}
-	args = append(args, "--cpus", "2", "--memory", "2g", "--pids-limit", "256", "-v", workspace+":/workspace", "-w", "/workspace", "node:"+version)
+	args = append(args, "--cpus", "2", "--memory", "2g")
+	if runtime.GOOS != "windows" {
+		args = append(args, "--pids-limit", "256")
+	}
+	args = append(args, "-v", workspace+":/workspace", "-w", "/workspace", "node:"+version)
 	shell, shellArgs, err := containerShell(block)
 	if err != nil {
 		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: err.Error()}, nil

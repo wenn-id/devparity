@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -39,10 +40,16 @@ func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	if runtimeName != "docker" || result.Status != model.StatusPass || result.ExitCode != 0 {
 		t.Fatalf("runtime=%q result=%#v", runtimeName, result)
 	}
-	for _, want := range []string{"run", "--rm", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", "--cpus", "2", "--memory", "2g", "--pids-limit", "256", "-w", "/workspace", "node:22", "sh", "-eu", "-c", "echo ok"} {
+	for _, want := range []string{"run", "--rm", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", "--cpus", "2", "--memory", "2g", "-w", "/workspace", "node:22", "sh", "-eu", "-c", "echo ok"} {
 		if !containsArg(args, want) {
 			t.Fatalf("args=%#v, missing %q", args, want)
 		}
+	}
+	if runtime.GOOS == "windows" && containsArg(args, "--pids-limit") {
+		t.Fatalf("Windows Docker does not support --pids-limit: args=%#v", args)
+	}
+	if runtime.GOOS != "windows" && (!containsArg(args, "--pids-limit") || !containsArg(args, "256")) {
+		t.Fatalf("POSIX runtime lost process limit: args=%#v", args)
 	}
 	for _, arg := range args {
 		if arg == root {
