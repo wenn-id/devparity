@@ -254,7 +254,13 @@ func TestLiveContainer(t *testing.T) {
 	if _, err := exec.LookPath(runtimeName); err != nil {
 		runtimeName = "podman"
 	}
-	if _, err := exec.LookPath(runtimeName); err != nil || exec.Command(runtimeName, "info").Run() != nil {
+	if _, err := exec.LookPath(runtimeName); err != nil {
+		t.Skip("no usable Docker or Podman runtime")
+	}
+	infoContext, infoCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	infoErr := exec.CommandContext(infoContext, runtimeName, "info").Run()
+	infoCancel()
+	if infoErr != nil {
 		t.Skip("no usable Docker or Podman runtime")
 	}
 	root := t.TempDir()
@@ -280,7 +286,13 @@ func TestLiveContainerTimeoutRemovesContainer(t *testing.T) {
 	if _, err := exec.LookPath(runtimeName); err != nil {
 		runtimeName = "podman"
 	}
-	if _, err := exec.LookPath(runtimeName); err != nil || exec.Command(runtimeName, "info").Run() != nil {
+	if _, err := exec.LookPath(runtimeName); err != nil {
+		t.Skip("no usable Docker or Podman runtime")
+	}
+	infoContext, infoCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	infoErr := exec.CommandContext(infoContext, runtimeName, "info").Run()
+	infoCancel()
+	if infoErr != nil {
 		t.Skip("no usable Docker or Podman runtime")
 	}
 	oldCommand := commandFunc
@@ -302,7 +314,9 @@ func TestLiveContainerTimeoutRemovesContainer(t *testing.T) {
 	if containerName == "" {
 		t.Fatal("container name was not retained")
 	}
-	output, err := exec.Command(runtimeName, "ps", "-a", "--filter", "name="+containerName, "--format", "{{.Names}}").CombinedOutput()
+	listContext, listCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	output, err := exec.CommandContext(listContext, runtimeName, "ps", "-a", "--filter", "name="+containerName, "--format", "{{.Names}}").CombinedOutput()
+	listCancel()
 	if err != nil {
 		t.Fatalf("container listing failed: %v; output=%q", err, output)
 	}
