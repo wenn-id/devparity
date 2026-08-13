@@ -92,7 +92,7 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 
 func runtimeFailure(stderr []byte) bool {
 	message := strings.ToLower(string(stderr))
-	for _, marker := range []string{"permission denied", "cannot connect", "failed to connect", "is the docker daemon running", "error during connect"} {
+	for _, marker := range []string{"permission denied", "cannot connect", "failed to connect", "is the docker daemon running", "error during connect", "no matching manifest", "unable to find image"} {
 		if strings.Contains(message, marker) {
 			return true
 		}
