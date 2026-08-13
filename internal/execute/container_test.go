@@ -25,9 +25,13 @@ func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	}
 	var runtimeName string
 	var args []string
+	var calls int
 	commandFunc = func(_ context.Context, name string, got []string, _ int64) ([]byte, []byte, int, error) {
-		runtimeName = name
-		args = append([]string(nil), got...)
+		calls++
+		if len(got) > 0 && got[0] == "run" {
+			runtimeName = name
+			args = append([]string(nil), got...)
+		}
 		return []byte("ok"), nil, 0, nil
 	}
 	root := t.TempDir()
@@ -40,10 +44,17 @@ func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	if runtimeName != "docker" || result.Status != model.StatusPass || result.ExitCode != 0 {
 		t.Fatalf("runtime=%q result=%#v", runtimeName, result)
 	}
-	for _, want := range []string{"run", "--rm", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", "--cpus", "2", "--memory", "2g", "-w", "/workspace", "node:22", "sh", "-eu", "-c", "echo ok"} {
+	if calls != 2 {
+		t.Fatalf("calls=%d, want run plus cleanup", calls)
+	}
+	for _, want := range []string{"run", "--rm", "--name", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", "--cpus", "2", "--memory", "2g", "-w", "/workspace", "node:22", "sh", "-eu", "-c", "echo ok"} {
 		if !containsArg(args, want) {
 			t.Fatalf("args=%#v, missing %q", args, want)
 		}
+	}
+	name := argValue(args, "--name")
+	if name == "" || !strings.HasPrefix(name, "devparity-") {
+		t.Fatalf("invalid retained container name %q in args=%#v", name, args)
 	}
 	if runtime.GOOS == "windows" && containsArg(args, "--pids-limit") {
 		t.Fatalf("Windows Docker does not support --pids-limit: args=%#v", args)
@@ -109,7 +120,10 @@ func TestRunContainerDoesNotClassifyCommandStderrAsRuntimeFailure(t *testing.T) 
 	oldLookPath, oldCommand := lookPath, commandFunc
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
-	commandFunc = func(_ context.Context, _ string, _ []string, _ int64) ([]byte, []byte, int, error) {
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if args[0] == "rm" {
+			return nil, nil, 0, nil
+		}
 		return []byte("ok"), []byte("permission denied ghp_abcd1234"), 0, nil
 	}
 	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "README.md:2", Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
@@ -118,6 +132,78 @@ func TestRunContainerDoesNotClassifyCommandStderrAsRuntimeFailure(t *testing.T) 
 	}
 	if result.Status != model.StatusPass || !strings.Contains(result.Stderr, "[REDACTED]") {
 		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestRunContainerForceRemovesTimedOutContainerBeforeWorkspaceCleanup(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(string) (string, error) { return "/fake/docker", nil }
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "sentinel", "unchanged")
+	var workspace string
+	var containerName string
+	var calls [][]string
+	commandFunc = func(ctx context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		calls = append(calls, append([]string(nil), args...))
+		switch args[0] {
+		case "run":
+			workspace = strings.TrimSuffix(argValue(args, "-v"), ":/workspace")
+			containerName = argValue(args, "--name")
+			<-ctx.Done()
+			return nil, nil, -1, nil
+		case "rm":
+			if ctx.Err() != nil {
+				t.Errorf("cleanup context canceled: %v", ctx.Err())
+			}
+			if args[1] != "-f" || args[2] != containerName {
+				t.Errorf("cleanup args=%#v, want rm -f %q", args, containerName)
+			}
+			if _, err := os.Stat(workspace); err != nil {
+				t.Errorf("workspace removed before container cleanup: %v", err)
+			}
+			return nil, nil, 0, nil
+		default:
+			t.Fatalf("unexpected command args=%#v", args)
+			return nil, nil, -1, errors.New("unexpected command")
+		}
+	}
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "sleep 30"}, Options{Root: root, NodeVersion: "22", Timeout: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusFinding {
+		t.Fatalf("result=%#v", result)
+	}
+	if len(calls) != 2 || calls[1][0] != "rm" {
+		t.Fatalf("calls=%#v", calls)
+	}
+	if workspace == "" || containerName == "" {
+		t.Fatalf("workspace=%q container=%q calls=%#v", workspace, containerName, calls)
+	}
+	if _, err := os.Stat(workspace); !os.IsNotExist(err) {
+		t.Fatalf("workspace still exists after cleanup: %v", err)
+	}
+}
+
+func TestRunContainerAttemptsCleanupAfterRuntimeError(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(string) (string, error) { return "/fake/docker", nil }
+	var cleanupCalled bool
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if args[0] == "rm" {
+			cleanupCalled = true
+			return nil, nil, 0, nil
+		}
+		return nil, nil, -1, errors.New("daemon unavailable")
+	}
+	_, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err == nil || !strings.Contains(err.Error(), "container runtime failed") {
+		t.Fatalf("err=%v", err)
+	}
+	if !cleanupCalled {
+		t.Fatal("container cleanup was not attempted after runtime error")
 	}
 }
 
@@ -144,7 +230,9 @@ func TestRunContainerAllowNetworkRemovesOnlyNetworkRestriction(t *testing.T) {
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	var args []string
 	commandFunc = func(_ context.Context, _ string, got []string, _ int64) ([]byte, []byte, int, error) {
-		args = append([]string(nil), got...)
+		if len(got) > 0 && got[0] == "run" {
+			args = append([]string(nil), got...)
+		}
 		return nil, nil, 0, nil
 	}
 	if _, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22", AllowNetwork: true}); err != nil {
@@ -184,6 +272,45 @@ func TestLiveContainer(t *testing.T) {
 	}
 }
 
+func TestLiveContainerTimeoutRemovesContainer(t *testing.T) {
+	if os.Getenv("DEVPARITY_CONTAINER_TEST") != "1" {
+		t.Skip("set DEVPARITY_CONTAINER_TEST=1 to run the Docker/Podman integration test")
+	}
+	runtimeName := "docker"
+	if _, err := exec.LookPath(runtimeName); err != nil {
+		runtimeName = "podman"
+	}
+	if _, err := exec.LookPath(runtimeName); err != nil || exec.Command(runtimeName, "info").Run() != nil {
+		t.Skip("no usable Docker or Podman runtime")
+	}
+	oldCommand := commandFunc
+	t.Cleanup(func() { commandFunc = oldCommand })
+	var containerName string
+	commandFunc = func(ctx context.Context, name string, args []string, maxOutput int64) ([]byte, []byte, int, error) {
+		if len(args) > 0 && args[0] == "run" {
+			containerName = argValue(args, "--name")
+		}
+		return runCommand(ctx, name, args, maxOutput)
+	}
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "timeout", Shell: "sh", Script: "sleep 30"}, Options{Root: t.TempDir(), NodeVersion: "22", Timeout: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusFinding {
+		t.Fatalf("result=%#v", result)
+	}
+	if containerName == "" {
+		t.Fatal("container name was not retained")
+	}
+	output, err := exec.Command(runtimeName, "ps", "-a", "--filter", "name="+containerName, "--format", "{{.Names}}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("container listing failed: %v; output=%q", err, output)
+	}
+	if strings.TrimSpace(string(output)) != "" {
+		t.Fatalf("timed-out container remains: %q", output)
+	}
+}
+
 func containsArg(args []string, want string) bool {
 	for _, arg := range args {
 		if strings.EqualFold(arg, want) {
@@ -191,4 +318,16 @@ func containsArg(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func argValue(args []string, flag string) string {
+	for index, arg := range args {
+		if arg == flag {
+			if index+1 >= len(args) {
+				return ""
+			}
+			return args[index+1]
+		}
+	}
+	return ""
 }

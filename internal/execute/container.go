@@ -2,6 +2,8 @@ package execute
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -32,12 +34,12 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	if version == "" {
 		return model.ExecutionResult{}, errors.New("container execution requires a concrete Node version")
 	}
-	workspace, cleanup, err := CopyWorkspace(opts.Root)
+	workspace, workspaceCleanup, err := CopyWorkspace(opts.Root)
 	if err != nil {
 		return model.ExecutionResult{}, err
 	}
 	defer func() {
-		if cleanupErr := cleanup(); cleanupErr != nil {
+		if cleanupErr := workspaceCleanup(); cleanupErr != nil {
 			result = model.ExecutionResult{}
 			err = fmt.Errorf("container workspace cleanup failed: %w", cleanupErr)
 		}
@@ -52,7 +54,35 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	if runtimeName == "" {
 		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: "docker or podman is not installed"}, nil
 	}
-	args := []string{"run", "--rm", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
+	shell, shellArgs, err := containerShell(block)
+	if err != nil {
+		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: err.Error()}, nil
+	}
+	containerName, err := uniqueContainerName()
+	if err != nil {
+		return model.ExecutionResult{}, fmt.Errorf("container name generation failed: %w", err)
+	}
+	cleanupArmed := false
+	defer func() {
+		if !cleanupArmed {
+			return
+		}
+		if cleanupErr := forceRemoveContainer(runtimeName, containerName, opts.MaxOutput); cleanupErr != nil {
+			cleanupFailure := fmt.Errorf("container cleanup failed: %w", cleanupErr)
+			priorResult := result
+			result = model.ExecutionResult{}
+			if err == nil {
+				if priorResult.Status == model.StatusFinding {
+					err = fmt.Errorf("container runtime failed: exit code %d; %w", priorResult.ExitCode, cleanupFailure)
+				} else {
+					err = cleanupFailure
+				}
+			} else {
+				err = fmt.Errorf("%v; %w", err, cleanupFailure)
+			}
+		}
+	}()
+	args := []string{"run", "--rm", "--name", containerName, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
 	if !opts.AllowNetwork {
 		args = append(args, "--network", "none")
 	}
@@ -61,10 +91,6 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 		args = append(args, "--pids-limit", "256")
 	}
 	args = append(args, "-v", workspace+":/workspace", "-w", "/workspace", "node:"+version)
-	shell, shellArgs, err := containerShell(block)
-	if err != nil {
-		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: err.Error()}, nil
-	}
 	args = append(args, shell)
 	args = append(args, shellArgs...)
 	if opts.Timeout <= 0 {
@@ -76,6 +102,7 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	commandContext, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 	start := time.Now()
+	cleanupArmed = true
 	stdout, stderr, exit, runErr := commandFunc(commandContext, runtimeName, args, opts.MaxOutput)
 	if runErr != nil {
 		return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %w", runErr)
@@ -90,6 +117,41 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 		}
 	}
 	return result, nil
+}
+
+func uniqueContainerName() (string, error) {
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	return "devparity-" + hex.EncodeToString(suffix[:]), nil
+}
+
+func forceRemoveContainer(runtimeName, containerName string, maxOutput int64) error {
+	cleanupContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, stderr, exit, err := commandFunc(cleanupContext, runtimeName, []string{"rm", "-f", containerName}, maxOutput)
+	if err != nil {
+		return err
+	}
+	if exit == 0 || containerNotFound(stderr) {
+		return nil
+	}
+	message := strings.TrimSpace(string(stderr))
+	if message == "" {
+		message = fmt.Sprintf("exit code %d", exit)
+	}
+	return errors.New(NewRedactor(nil).Redact(message))
+}
+
+func containerNotFound(stderr []byte) bool {
+	message := strings.ToLower(string(stderr))
+	for _, marker := range []string{"no such container", "no container with name", "no container with id", "does not exist"} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func containerShell(block model.DocBlock) (string, []string, error) {
