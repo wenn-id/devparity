@@ -93,3 +93,48 @@ func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
 		t.Fatal("release workflow does not execute a release asset to verify its version")
 	}
 }
+
+func TestReleaseChecksumsUseBasenames(t *testing.T) {
+	read := func(path ...string) string {
+		data, err := os.ReadFile(filepath.Join(path...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
+	}
+	releaseText := read("..", "..", ".github", "workflows", "release.yml")
+	actionText := read("..", "..", "action.yml")
+	ciText := read("..", "..", ".github", "workflows", "ci.yml")
+
+	const manifestCommand = `(cd dist && sha256sum "${assets[@]}" > checksums.txt)`
+	if !strings.Contains(releaseText, manifestCommand) {
+		t.Fatalf("release workflow does not generate basename checksums with %q", manifestCommand)
+	}
+	if strings.Contains(releaseText, "sha256sum dist/* > dist/checksums.txt") {
+		t.Fatal("release workflow still writes dist-prefixed checksum paths")
+	}
+	const verifyCommand = `grep "  ${asset}$" checksums.txt | sha256sum -c -`
+	if !strings.Contains(actionText, verifyCommand) {
+		t.Fatal("action checksum verification no longer expects basename entries")
+	}
+	if !strings.Contains(ciText, "name: Verify release checksum manifest") {
+		t.Fatal("CI is missing the release checksum smoke test")
+	}
+	if !strings.Contains(ciText, manifestCommand) {
+		t.Fatal("CI smoke test does not generate the release manifest command")
+	}
+	if !strings.Contains(ciText, verifyCommand) {
+		t.Fatal("CI smoke test does not use the action checksum verification command")
+	}
+	for _, asset := range []string{
+		"devparity-linux-amd64",
+		"devparity-linux-arm64",
+		"devparity-darwin-amd64",
+		"devparity-darwin-arm64",
+		"devparity-windows-amd64.exe",
+	} {
+		if !strings.Contains(ciText, asset) {
+			t.Fatalf("CI smoke test does not cover asset %q", asset)
+		}
+	}
+}

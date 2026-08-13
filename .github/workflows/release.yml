@@ -49,7 +49,7 @@ jobs:
             fi
           done
           test "$(./dist/devparity-linux-amd64 version)" = "$VERSION"
-          sha256sum dist/* > dist/checksums.txt
+          (cd dist && sha256sum "${assets[@]}" > checksums.txt)
       - uses: actions/upload-artifact@v7
         with:
           name: devparity-${{ github.ref_name }}

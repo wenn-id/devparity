@@ -29,6 +29,29 @@ jobs:
       - if: runner.os == 'Linux'
         run: go test -race ./...
       - run: go build -trimpath ./cmd/devparity
+      - if: runner.os == 'Linux'
+        name: Verify release checksum manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "$workdir"' EXIT
+          mkdir "$workdir/dist"
+          cd "$workdir"
+          assets=(
+            devparity-linux-amd64
+            devparity-linux-arm64
+            devparity-darwin-amd64
+            devparity-darwin-arm64
+            devparity-windows-amd64.exe
+          )
+          for asset in "${assets[@]}"; do
+            printf '%s\n' "$asset" > "dist/$asset"
+          done
+          (cd dist && sha256sum "${assets[@]}" > checksums.txt)
+          for asset in "${assets[@]}"; do
+            (cd dist && grep "  ${asset}$" checksums.txt | sha256sum -c -)
+          done
 
   container:
     runs-on: ubuntu-latest
