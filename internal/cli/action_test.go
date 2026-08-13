@@ -42,3 +42,21 @@ func TestActionHasSafeCompositeInputs(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseEmbedsVersionAndVerifiesAsset(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	const linkerTarget = "-X github.com/wenn-id/devparity/internal/cli.Version=${VERSION}"
+	if !strings.Contains(text, linkerTarget) {
+		t.Fatalf("release workflow missing linker target %q", linkerTarget)
+	}
+	if strings.Contains(text, "-X github.com/devparity/devparity/internal/cli.Version=") {
+		t.Fatal("release workflow still uses the old module path for Version")
+	}
+	if !strings.Contains(text, `test "$(./dist/devparity-linux-amd64 version)" = "$VERSION"`) {
+		t.Fatal("release workflow does not verify the embedded version")
+	}
+}

@@ -37,9 +37,10 @@ jobs:
               windows-amd64.exe) goos=windows; goarch=amd64; asset=devparity-windows-amd64.exe ;;
             esac
             CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
-              go build -trimpath -ldflags "-s -w -X github.com/devparity/devparity/internal/cli.Version=${VERSION}" \
+              go build -trimpath -ldflags "-s -w -X github.com/wenn-id/devparity/internal/cli.Version=${VERSION}" \
               -o "dist/${asset}" ./cmd/devparity
           done
+          test "$(./dist/devparity-linux-amd64 version)" = "$VERSION"
           sha256sum dist/* > dist/checksums.txt
       - uses: actions/upload-artifact@v7
         with:
