@@ -247,8 +247,8 @@ func TestRunContainerAllowNetworkRemovesOnlyNetworkRestriction(t *testing.T) {
 }
 
 func TestLiveContainer(t *testing.T) {
-	if os.Getenv("DEVPARITY_CONTAINER_TEST") != "1" {
-		t.Skip("set DEVPARITY_CONTAINER_TEST=1 to run the Docker/Podman integration test")
+	if runtime.GOOS != "linux" || os.Getenv("DEVPARITY_CONTAINER_TEST") != "1" {
+		t.Skip("set DEVPARITY_CONTAINER_TEST=1 on Linux to run the Docker/Podman integration test")
 	}
 	runtimeName := "docker"
 	if _, err := exec.LookPath(runtimeName); err != nil {
@@ -264,13 +264,17 @@ func TestLiveContainer(t *testing.T) {
 		t.Skip("no usable Docker or Podman runtime")
 	}
 	root := t.TempDir()
+	writeWorkspaceFile(t, root, "package.json", `{"name":"live"}`)
 	writeWorkspaceFile(t, root, "sentinel", "unchanged")
-	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "live", Shell: "sh", Script: "head -c 2097152 /dev/zero; printf warning >&2"}, Options{Root: root, NodeVersion: "22", Timeout: time.Minute})
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "live", Shell: "sh", Script: `test "$(cat package.json)" = '{"name":"live"}'; printf read-ok; printf created > container-artifact; test "$(cat container-artifact)" = created; printf warning >&2`}, Options{Root: root, NodeVersion: "22", Timeout: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != model.StatusPass || int64(len(result.Stdout)) > defaultMaxOutput || !strings.Contains(result.Stderr, "warning") {
+	if result.Status != model.StatusPass || !strings.Contains(result.Stdout, "read-ok") || int64(len(result.Stdout)) > defaultMaxOutput || !strings.Contains(result.Stderr, "warning") {
 		t.Fatalf("result=%#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, "container-artifact")); !os.IsNotExist(err) {
+		t.Fatalf("container artifact leaked into original repository: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "sentinel"))
 	if err != nil || string(data) != "unchanged" {

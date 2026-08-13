@@ -3,8 +3,42 @@ package execute
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+func TestCopyWorkspaceMakesNestedCopyAccessibleToContainerUser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "package.json", "{}")
+	writeWorkspaceFile(t, root, "src/index.js", "console.log('ok')")
+	copy, cleanup, err := CopyWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cleanup() })
+	for _, path := range []string{copy, filepath.Join(copy, "src")} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o777 {
+			t.Fatalf("directory %q mode=%o, want 777", path, info.Mode().Perm())
+		}
+	}
+	info, err := os.Stat(filepath.Join(copy, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("file mode=%o, want 644", info.Mode().Perm())
+	}
+	if err := os.WriteFile(filepath.Join(copy, "container-artifact"), []byte("created"), 0o666); err != nil {
+		t.Fatalf("workspace is not writable: %v", err)
+	}
+}
 
 func TestCopyWorkspaceExcludesMutableDirectoriesAndCleansUp(t *testing.T) {
 	root := t.TempDir()
