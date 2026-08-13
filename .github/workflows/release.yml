@@ -25,6 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
+          assets=()
           for target in \
             linux-amd64 linux-arm64 \
             darwin-amd64 darwin-arm64 \
@@ -37,9 +38,17 @@ jobs:
               windows-amd64.exe) goos=windows; goarch=amd64; asset=devparity-windows-amd64.exe ;;
             esac
             CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
-              go build -trimpath -ldflags "-s -w -X github.com/devparity/devparity/internal/cli.Version=${VERSION}" \
+              go build -trimpath -ldflags "-s -w -X github.com/wenn-id/devparity/internal/cli.Version=${VERSION}" \
               -o "dist/${asset}" ./cmd/devparity
+            assets+=("$asset")
           done
+          for asset in "${assets[@]}"; do
+            if ! grep -a -F -- "$VERSION" "dist/$asset" >/dev/null; then
+              echo "embedded version mismatch in $asset" >&2
+              exit 1
+            fi
+          done
+          test "$(./dist/devparity-linux-amd64 version)" = "$VERSION"
           sha256sum dist/* > dist/checksums.txt
       - uses: actions/upload-artifact@v7
         with:
