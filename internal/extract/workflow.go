@@ -8,9 +8,9 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/devparity/devparity/internal/model"
-	"github.com/devparity/devparity/internal/nodecmd"
-	"github.com/devparity/devparity/internal/repository"
+	"github.com/wenn-id/devparity/internal/model"
+	"github.com/wenn-id/devparity/internal/nodecmd"
+	"github.com/wenn-id/devparity/internal/repository"
 )
 
 const maxWorkflowBytes int64 = 1 << 20
@@ -159,9 +159,13 @@ func workflowSteps(path string, job *yaml.Node, matrix matrixValues) ([]model.Fa
 				findings = append(findings, workflowUnsupported(path, run.Line, fmt.Sprintf("unsupported workflow command %q", run.Value)))
 				continue
 			}
+			subject := command.Script
+			if subject == "" {
+				subject = command.Operation
+			}
 			facts = append(facts, model.Fact{
 				Kind:    model.FactKind("workflow.command"),
-				Subject: command.Operation,
+				Subject: subject,
 				Value:   run.Value,
 				Source:  model.SourceRef{Path: path, Line: run.Line, Field: "run"},
 			})

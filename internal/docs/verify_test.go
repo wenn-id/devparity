@@ -3,7 +3,7 @@ package docs
 import (
 	"testing"
 
-	"github.com/devparity/devparity/internal/model"
+	"github.com/wenn-id/devparity/internal/model"
 )
 
 func TestValidateReportsOneFindingPerMissingScript(t *testing.T) {
@@ -77,5 +77,40 @@ func TestValidateRecognizesPackageScriptAliases(t *testing.T) {
 	findings := Validate(blocks, facts)
 	if len(findings) != 1 || findings[0].Status != model.StatusPass {
 		t.Fatalf("findings=%#v", findings)
+	}
+}
+
+func TestExecutionFindingsMapResultsToBlocks(t *testing.T) {
+	blocks := []model.DocBlock{
+		{ID: "README.md:2", Shell: "sh", Script: "npm test", Source: model.SourceRef{Path: "README.md", Line: 2}},
+		{ID: "README.md:8", Shell: "sh", Script: "npm build", Source: model.SourceRef{Path: "README.md", Line: 8}},
+		{ID: "README.md:14", Shell: "sh", Script: "npm lint", Source: model.SourceRef{Path: "README.md", Line: 14}},
+	}
+	findings, err := ExecutionFindings(blocks, []model.ExecutionResult{
+		{BlockID: "README.md:2", ExitCode: 0, Status: model.StatusPass, Stdout: "ok"},
+		{BlockID: "README.md:8", ExitCode: 3, Status: model.StatusFinding, Stderr: "failed"},
+		{BlockID: "README.md:14", Status: model.StatusSkipped},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 3 {
+		t.Fatalf("findings=%#v", findings)
+	}
+	if findings[0].RuleID != "docs-command-passed" || findings[1].RuleID != "docs-command-failed" || findings[2].RuleID != "docs-command-skipped" {
+		t.Fatalf("findings=%#v", findings)
+	}
+	if len(findings[0].Evidence) != 2 || len(findings[1].Evidence) != 2 {
+		t.Fatalf("findings=%#v", findings)
+	}
+}
+
+func TestExecutionFindingsRejectMissingOrDuplicateBlockIDs(t *testing.T) {
+	blocks := []model.DocBlock{{ID: "README.md:2", Source: model.SourceRef{Path: "README.md", Line: 2}}}
+	if _, err := ExecutionFindings(blocks, []model.ExecutionResult{{BlockID: "missing"}}); err == nil {
+		t.Fatal("expected missing block error")
+	}
+	if _, err := ExecutionFindings(append(blocks, blocks[0]), []model.ExecutionResult{{BlockID: "README.md:2"}}); err == nil {
+		t.Fatal("expected duplicate block error")
 	}
 }

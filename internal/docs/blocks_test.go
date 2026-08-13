@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/devparity/devparity/internal/model"
+	"github.com/wenn-id/devparity/internal/model"
 )
 
 func TestExtractRequiresExactAdjacentMarker(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/devparity/devparity/internal/model"
+	"github.com/wenn-id/devparity/internal/model"
 )
 
 func TestWorkflowExtractsMatrixNodeAndCommands(t *testing.T) {

@@ -1,14 +1,69 @@
 package docs
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/devparity/devparity/internal/model"
-	"github.com/devparity/devparity/internal/nodecmd"
+	"github.com/wenn-id/devparity/internal/model"
+	"github.com/wenn-id/devparity/internal/nodecmd"
 )
+
+func ExecutionFindings(blocks []model.DocBlock, results []model.ExecutionResult) ([]model.Finding, error) {
+	byID := make(map[string]model.DocBlock, len(blocks))
+	for _, block := range blocks {
+		if _, exists := byID[block.ID]; exists {
+			return nil, fmt.Errorf("duplicate documentation block ID %q", block.ID)
+		}
+		byID[block.ID] = block
+	}
+	seen := make(map[string]struct{}, len(results))
+	findings := make([]model.Finding, 0, len(results))
+	for _, result := range results {
+		block, ok := byID[result.BlockID]
+		if !ok {
+			return nil, fmt.Errorf("execution result references unknown documentation block %q", result.BlockID)
+		}
+		if _, exists := seen[result.BlockID]; exists {
+			return nil, errors.New("duplicate execution result")
+		}
+		seen[result.BlockID] = struct{}{}
+		finding := model.Finding{
+			Evidence: []model.Fact{{Kind: model.FactKind("documentation.command"), Subject: block.ID, Value: block.Script, Source: block.Source}},
+		}
+		switch result.Status {
+		case model.StatusPass:
+			finding.RuleID = "docs-command-passed"
+			finding.Severity = model.SeverityInfo
+			finding.Status = model.StatusPass
+			finding.Message = fmt.Sprintf("documentation command %s completed successfully", block.ID)
+		case model.StatusFinding:
+			finding.RuleID = "docs-command-failed"
+			finding.Severity = model.SeverityError
+			finding.Status = model.StatusFinding
+			finding.Message = fmt.Sprintf("documentation command %s exited with code %d", block.ID, result.ExitCode)
+			finding.Suggestion = "Fix the command or update the marked documentation."
+		case model.StatusSkipped:
+			finding.RuleID = "docs-command-skipped"
+			finding.Severity = model.SeverityWarning
+			finding.Status = model.StatusSkipped
+			finding.Message = fmt.Sprintf("documentation command %s was skipped", block.ID)
+			finding.Suggestion = "Install the requested shell or use a supported execution mode."
+		default:
+			return nil, fmt.Errorf("unknown execution status %q for %q", result.Status, result.BlockID)
+		}
+		if result.Stdout != "" {
+			finding.Evidence = append(finding.Evidence, model.Fact{Kind: model.FactKind("execution.stdout"), Subject: block.ID, Value: result.Stdout, Source: block.Source})
+		}
+		if result.Stderr != "" {
+			finding.Evidence = append(finding.Evidence, model.Fact{Kind: model.FactKind("execution.stderr"), Subject: block.ID, Value: result.Stderr, Source: block.Source})
+		}
+		findings = append(findings, finding)
+	}
+	return findings, nil
+}
 
 func Validate(blocks []model.DocBlock, facts []model.Fact) []model.Finding {
 	scripts := make(map[string]struct{})

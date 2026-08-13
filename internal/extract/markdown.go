@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/devparity/devparity/internal/model"
-	"github.com/devparity/devparity/internal/repository"
+	"github.com/wenn-id/devparity/internal/model"
+	"github.com/wenn-id/devparity/internal/repository"
 )
 
 const maxMarkdownEvidenceBytes int64 = 1 << 20

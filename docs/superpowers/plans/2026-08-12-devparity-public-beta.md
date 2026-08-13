@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Module path: `github.com/devparity/devparity`; public tags are blocked until ownership of that namespace is confirmed.
+- Module path: `github.com/wenn-id/devparity`; public tags remain blocked until release verification passes.
 - `doctor` works without Go, Node.js, Docker, or Podman installed.
 - Beta scope is Node.js with npm, pnpm, and Yarn; Bun returns an explicit unsupported result.
 - Static mode reads only `package.json`, supported root lock/version files, the root `Dockerfile`, root `README.md`/`CONTRIBUTING.md`, and `.github/workflows/*.{yml,yaml}`.
@@ -69,7 +69,7 @@ There is no generic extractor registry, plugin interface, persistence layer, or 
 
 ```go
 // go.mod
-module github.com/devparity/devparity
+module github.com/wenn-id/devparity
 
 go 1.26.0
 ```
@@ -133,7 +133,7 @@ package main
 
 import (
     "os"
-    "github.com/devparity/devparity/internal/cli"
+    "github.com/wenn-id/devparity/internal/cli"
 )
 
 func main() { os.Exit(cli.Run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -969,7 +969,7 @@ runs:
           Windows-X64) asset=devparity-windows-amd64.exe ;;
           *) echo "unsupported runner" >&2; exit 2 ;;
         esac
-        base="https://github.com/devparity/devparity/releases/download/${DEVPARITY_VERSION}"
+        base="https://github.com/wenn-id/devparity/releases/download/${DEVPARITY_VERSION}"
         curl -fsSLO "${base}/${asset}"
         curl -fsSLO "${base}/checksums.txt"
         grep "  ${asset}$" checksums.txt | sha256sum -c -
@@ -1028,7 +1028,7 @@ Add a Linux Docker job with `DEVPARITY_CONTAINER_TEST=1`.
 For `v*` tags, test then cross-compile with `CGO_ENABLED=0` for Linux amd64/arm64, Darwin amd64/arm64, Windows amd64.
 
 ```bash
-go build -trimpath -ldflags "-s -w -X github.com/devparity/devparity/internal/cli.Version=${GITHUB_REF_NAME}" -o "dist/${asset}" ./cmd/devparity
+go build -trimpath -ldflags "-s -w -X github.com/wenn-id/devparity/internal/cli.Version=${GITHUB_REF_NAME}" -o "dist/${asset}" ./cmd/devparity
 ```
 
 Generate `checksums.txt`, upload via `actions/upload-artifact@v7`, and publish with `gh release create "$GITHUB_REF_NAME" dist/*`. Only the release job gets `contents: write`.

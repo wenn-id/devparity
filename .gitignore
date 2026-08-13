@@ -1,0 +1,10 @@
+# Local build outputs
+/devparity
+/dist/
+*.test
+coverage.out
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/

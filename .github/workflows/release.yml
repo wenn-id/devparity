@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.5
+      - run: go test ./...
+      - name: Build release assets
+        env:
+          VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in \
+            linux-amd64 linux-arm64 \
+            darwin-amd64 darwin-arm64 \
+            windows-amd64.exe; do
+            case "$target" in
+              linux-amd64) goos=linux; goarch=amd64; asset=devparity-linux-amd64 ;;
+              linux-arm64) goos=linux; goarch=arm64; asset=devparity-linux-arm64 ;;
+              darwin-amd64) goos=darwin; goarch=amd64; asset=devparity-darwin-amd64 ;;
+              darwin-arm64) goos=darwin; goarch=arm64; asset=devparity-darwin-arm64 ;;
+              windows-amd64.exe) goos=windows; goarch=amd64; asset=devparity-windows-amd64.exe ;;
+            esac
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags "-s -w -X github.com/devparity/devparity/internal/cli.Version=${VERSION}" \
+              -o "dist/${asset}" ./cmd/devparity
+          done
+          sha256sum dist/* > dist/checksums.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: devparity-${{ github.ref_name }}
+          path: dist
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes

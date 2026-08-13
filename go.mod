@@ -1,4 +1,4 @@
-module github.com/devparity/devparity
+module github.com/wenn-id/devparity
 
 go 1.26.0
 
