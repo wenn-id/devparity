@@ -79,11 +79,14 @@ func TestDocsContainerModeCanSkipWhenRuntimeIsUnavailable(t *testing.T) {
 	clean := filepath.Join("..", "..", "testdata", "repos", "clean-node")
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"docs", "verify", clean, "--container", "--node-version", "22"}, &stdout, &stderr)
-	if code != 0 && code != 2 {
+	if code != 0 && code != 1 && code != 2 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	if code == 0 && !strings.Contains(stdout.String(), "docs-command-skipped") && !strings.Contains(stdout.String(), "docs-command-passed") {
 		t.Fatalf("stdout=%q", stdout.String())
+	}
+	if code == 1 && !strings.Contains(stdout.String(), "docs-command-failed") {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 	if code == 2 && !strings.Contains(stdout.String()+stderr.String(), "container runtime failed") {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())

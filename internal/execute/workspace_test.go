@@ -7,6 +7,39 @@ import (
 	"testing"
 )
 
+func TestCopyWorkspaceMakesNestedCopyAccessibleToContainerUser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "package.json", "{}")
+	writeWorkspaceFile(t, root, "src/index.js", "console.log('ok')")
+	copy, cleanup, err := CopyWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cleanup() })
+	for _, path := range []string{copy, filepath.Join(copy, "src")} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o777 {
+			t.Fatalf("directory %q mode=%o, want 777", path, info.Mode().Perm())
+		}
+	}
+	info, err := os.Stat(filepath.Join(copy, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("file mode=%o, want 644", info.Mode().Perm())
+	}
+	if err := os.WriteFile(filepath.Join(copy, "container-artifact"), []byte("created"), 0o666); err != nil {
+		t.Fatalf("workspace is not writable: %v", err)
+	}
+}
+
 func TestCopyWorkspaceExcludesMutableDirectoriesAndCleansUp(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, root, "README.md", "ok")
@@ -33,26 +66,6 @@ func TestCopyWorkspaceExcludesMutableDirectoriesAndCleansUp(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(root, "README.md")); err != nil || string(data) != "ok" {
 		t.Fatalf("source changed: data=%q err=%v", data, err)
-	}
-}
-
-func TestCopyWorkspaceRootIsTraversableByContainerUser(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX container permissions do not apply on Windows")
-	}
-	root := t.TempDir()
-	writeWorkspaceFile(t, root, "README.md", "ok")
-	copy, cleanup, err := CopyWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cleanup() })
-	info, err := os.Stat(copy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm()&0o111 == 0 {
-		t.Fatalf("workspace root is not traversable: mode=%#o", info.Mode().Perm())
 	}
 }
 

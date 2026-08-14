@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+// ponytail: use mode-based access until portable UID/GID or ACL mapping exists;
+// keep container execution non-root.
+const (
+	workspaceDirectoryMode = 0o777
+	workspaceFileMode      = 0o644
+)
+
 func CopyWorkspace(root string) (string, func() error, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
@@ -17,7 +24,7 @@ func CopyWorkspace(root string) (string, func() error, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	if err := os.Chmod(target, 0o755); err != nil {
+	if err := os.Chmod(target, workspaceDirectoryMode); err != nil {
 		_ = os.RemoveAll(target)
 		return "", nil, err
 	}
@@ -36,6 +43,13 @@ func CopyWorkspace(root string) (string, func() error, error) {
 		if entry.IsDir() && excludedDirectory(rel) {
 			return filepath.SkipDir
 		}
+		if entry.IsDir() {
+			destination := filepath.Join(target, rel)
+			if err := os.MkdirAll(destination, workspaceDirectoryMode); err != nil {
+				return err
+			}
+			return os.Chmod(destination, workspaceDirectoryMode)
+		}
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("workspace contains unsupported symlink %q", filepath.ToSlash(rel))
 		}
@@ -43,19 +57,22 @@ func CopyWorkspace(root string) (string, func() error, error) {
 			return fmt.Errorf("workspace contains unsupported file %q", filepath.ToSlash(rel))
 		}
 		destination := filepath.Join(target, rel)
-		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(destination), workspaceDirectoryMode); err != nil {
 			return err
 		}
 		input, err := os.Open(path)
 		if err != nil {
 			return err
 		}
-		output, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		output, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, workspaceFileMode)
 		if err == nil {
 			_, err = copyFile(output, input)
 		}
 		if closeErr := input.Close(); err == nil {
 			err = closeErr
+		}
+		if err == nil {
+			err = output.Chmod(workspaceFileMode)
 		}
 		if closeErr := output.Close(); err == nil && output != nil {
 			err = closeErr

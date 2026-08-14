@@ -104,7 +104,7 @@ func TestReleaseChecksumsUseBasenames(t *testing.T) {
 	}
 	releaseText := read("..", "..", ".github", "workflows", "release.yml")
 	actionText := read("..", "..", "action.yml")
-	ciText := read("..", "..", ".github", "workflows", "ci.yml")
+	verifyText := read("..", "..", ".github", "workflows", "verify.yml")
 
 	const manifestCommand = `(cd dist && sha256sum "${assets[@]}" > checksums.txt)`
 	if !strings.Contains(releaseText, manifestCommand) {
@@ -118,16 +118,16 @@ func TestReleaseChecksumsUseBasenames(t *testing.T) {
 		t.Fatal("action checksum verification no longer expects basename entries")
 	}
 	const smokeStepName = "        name: Verify release checksum manifest"
-	stepStart := strings.Index(ciText, smokeStepName)
+	stepStart := strings.Index(verifyText, smokeStepName)
 	if stepStart == -1 {
 		t.Fatal("CI is missing the release checksum smoke test")
 	}
-	runStart := strings.Index(ciText[stepStart:], "        run: |\n")
+	runStart := strings.Index(verifyText[stepStart:], "        run: |\n")
 	if runStart == -1 {
 		t.Fatal("CI checksum smoke test is missing its run block")
 	}
 	runLines := make([]string, 0)
-	for _, line := range strings.Split(ciText[stepStart+runStart+len("        run: |\n"):], "\n") {
+	for _, line := range strings.Split(verifyText[stepStart+runStart+len("        run: |\n"):], "\n") {
 		if line != "" && len(line)-len(strings.TrimLeft(line, " ")) < 10 {
 			break
 		}
@@ -150,5 +150,129 @@ func TestReleaseChecksumsUseBasenames(t *testing.T) {
 		if !strings.Contains(smokeRun, asset) {
 			t.Fatalf("CI smoke test does not cover asset %q", asset)
 		}
+	}
+}
+
+func TestReleaseWaitsForAllVerificationGates(t *testing.T) {
+	read := func(path ...string) string {
+		data, err := os.ReadFile(filepath.Join(path...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
+	}
+	verifyText := read("..", "..", ".github", "workflows", "verify.yml")
+	ciText := read("..", "..", ".github", "workflows", "ci.yml")
+	releaseText := read("..", "..", ".github", "workflows", "release.yml")
+	extractJob := func(text, job string) string {
+		lines := strings.Split(text, "\n")
+		start := -1
+		for i, line := range lines {
+			if line == "  "+job+":" {
+				start = i
+				break
+			}
+		}
+		if start == -1 {
+			t.Fatalf("workflow is missing job %q", job)
+		}
+		end := len(lines)
+		for i := start + 1; i < len(lines); i++ {
+			if strings.HasPrefix(lines[i], "  ") && !strings.HasPrefix(lines[i], "    ") && strings.TrimSpace(lines[i]) != "" {
+				end = i
+				break
+			}
+		}
+		return strings.Join(lines[start:end], "\n")
+	}
+
+	ciVerifyJob := extractJob(ciText, "verify")
+	releaseVerifyJob := extractJob(releaseText, "verify")
+	packageJob := extractJob(releaseText, "package")
+	publishJob := extractJob(releaseText, "publish")
+
+	if !strings.Contains(verifyText, "workflow_call:") {
+		t.Fatal("verify workflow is not reusable")
+	}
+	if !strings.Contains(verifyText, "permissions:\n  contents: read") {
+		t.Fatal("verification workflow does not declare read-only permissions")
+	}
+	for _, forbidden := range []string{"contents: write", "write-all", "permissions: write"} {
+		if strings.Contains(verifyText, forbidden) {
+			t.Fatalf("verification workflow requests write-capable permission %q", forbidden)
+		}
+	}
+	if strings.Count(verifyText, "ref: ${{ github.sha }}") < 2 {
+		t.Fatal("verification workflow does not check out the caller commit")
+	}
+	for _, gate := range []string{
+		"gofmt -w .",
+		"go vet ./...",
+		"go test ./...",
+		"go test -race ./...",
+		"go build -trimpath ./cmd/devparity",
+		"Verify release checksum manifest",
+		"DEVPARITY_CONTAINER_TEST: \"1\"",
+	} {
+		if !strings.Contains(verifyText, gate) {
+			t.Fatalf("verification workflow missing %q", gate)
+		}
+	}
+	if !strings.Contains(ciText, "push:") || !strings.Contains(ciText, "pull_request:") {
+		t.Fatal("CI does not trigger for push and pull-request events")
+	}
+	if !strings.Contains(ciVerifyJob, "uses: ./.github/workflows/verify.yml") {
+		t.Fatal("CI does not call reusable verification workflow")
+	}
+	if !strings.Contains(ciVerifyJob, "permissions:\n      contents: read") {
+		t.Fatal("CI verification caller does not use read-only permissions")
+	}
+	for _, forbidden := range []string{"contents: write", "write-all"} {
+		if strings.Contains(ciVerifyJob, forbidden) {
+			t.Fatalf("CI verification caller requests write-capable permission %q", forbidden)
+		}
+	}
+	if !strings.Contains(releaseVerifyJob, "uses: ./.github/workflows/verify.yml") {
+		t.Fatal("release does not call reusable verification workflow")
+	}
+	if !strings.Contains(releaseVerifyJob, "permissions:\n      contents: read") {
+		t.Fatal("release verification caller does not use read-only permissions")
+	}
+	for _, forbidden := range []string{"contents: write", "write-all"} {
+		if strings.Contains(releaseVerifyJob, forbidden) {
+			t.Fatalf("release verification caller requests write-capable permission %q", forbidden)
+		}
+	}
+	if !strings.Contains(packageJob, "needs: verify") {
+		t.Fatal("package job does not wait for verification")
+	}
+	if !strings.Contains(packageJob, "permissions:\n      contents: read") {
+		t.Fatal("package job does not use read-only permissions")
+	}
+	if strings.Contains(packageJob, "contents: write") || strings.Contains(packageJob, "write-all") {
+		t.Fatal("package job requests write-capable permissions")
+	}
+	if !strings.Contains(packageJob, "ref: ${{ github.sha }}") {
+		t.Fatal("release package job does not check out the caller commit")
+	}
+	if !strings.Contains(packageJob, "actions/upload-artifact@v7") || !strings.Contains(packageJob, "name: release-assets") {
+		t.Fatal("package job does not upload the release-assets artifact")
+	}
+	if !strings.Contains(publishJob, "needs: [verify, package]") {
+		t.Fatal("publish does not wait for verification and packaging")
+	}
+	if !strings.Contains(publishJob, "permissions:\n      contents: write") {
+		t.Fatal("publish job lacks isolated write permission")
+	}
+	if !strings.Contains(publishJob, "actions/download-artifact@v7") || strings.Count(publishJob, "name: release-assets") != 1 {
+		t.Fatal("publish job does not download exactly the release-assets artifact")
+	}
+	for _, forbidden := range []string{"actions/checkout@", "actions/setup-go@", "gofmt", "go test", "go build"} {
+		if strings.Contains(publishJob, forbidden) {
+			t.Fatalf("publish job must not contain %q", forbidden)
+		}
+	}
+	if !strings.Contains(publishJob, "gh release create") {
+		t.Fatal("publish job does not create the release")
 	}
 }
