@@ -17,6 +17,10 @@ func CopyWorkspace(root string) (string, func() error, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	if err := os.Chmod(target, 0o755); err != nil {
+		_ = os.RemoveAll(target)
+		return "", nil, err
+	}
 	cleanup := func() error { return os.RemoveAll(target) }
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

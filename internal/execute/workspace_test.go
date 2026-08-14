@@ -3,6 +3,7 @@ package execute
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -32,6 +33,26 @@ func TestCopyWorkspaceExcludesMutableDirectoriesAndCleansUp(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(root, "README.md")); err != nil || string(data) != "ok" {
 		t.Fatalf("source changed: data=%q err=%v", data, err)
+	}
+}
+
+func TestCopyWorkspaceRootIsTraversableByContainerUser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX container permissions do not apply on Windows")
+	}
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "README.md", "ok")
+	copy, cleanup, err := CopyWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cleanup() })
+	info, err := os.Stat(copy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("workspace root is not traversable: mode=%#o", info.Mode().Perm())
 	}
 }
 
