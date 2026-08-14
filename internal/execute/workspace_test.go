@@ -1,9 +1,11 @@
 package execute
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +39,79 @@ func TestCopyWorkspaceMakesNestedCopyAccessibleToContainerUser(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(copy, "container-artifact"), []byte("created"), 0o666); err != nil {
 		t.Fatalf("workspace is not writable: %v", err)
+	}
+}
+
+func TestCopyWorkspaceRejectsOversizedFileAndCleansUp(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "small", "ok")
+	writeWorkspaceFile(t, root, "large", strings.Repeat("x", int(workspaceMaxFileBytes)+1))
+
+	copy, cleanup, err := CopyWorkspaceWithContext(context.Background(), root, WorkspaceLimits{MaxFileBytes: workspaceMaxFileBytes, MaxTotalBytes: workspaceMaxTotalBytes, MaxFiles: workspaceMaxFiles})
+	if err == nil {
+		_ = cleanup()
+		t.Fatal("expected oversized-file error")
+	}
+	if copy != "" || cleanup != nil {
+		t.Fatalf("copy=%q cleanup=%v after failure", copy, cleanup != nil)
+	}
+	if !strings.Contains(err.Error(), "maximum file size") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCopyWorkspaceRejectsCumulativeSizeAndCleansUp(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "one", "12")
+	writeWorkspaceFile(t, root, "two", "34")
+
+	copy, cleanup, err := CopyWorkspaceWithContext(context.Background(), root, WorkspaceLimits{MaxFileBytes: 2, MaxTotalBytes: 3, MaxFiles: 10})
+	if err == nil {
+		_ = cleanup()
+		t.Fatal("expected cumulative-size error")
+	}
+	if copy != "" || cleanup != nil {
+		t.Fatalf("copy=%q cleanup=%v after failure", copy, cleanup != nil)
+	}
+	if !strings.Contains(err.Error(), "maximum size") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCopyWorkspaceRejectsFileCountAndCleansUp(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "one", "1")
+	writeWorkspaceFile(t, root, "two", "2")
+
+	copy, cleanup, err := CopyWorkspaceWithContext(context.Background(), root, WorkspaceLimits{MaxFileBytes: 10, MaxTotalBytes: 10, MaxFiles: 1})
+	if err == nil {
+		_ = cleanup()
+		t.Fatal("expected file-count error")
+	}
+	if copy != "" || cleanup != nil {
+		t.Fatalf("copy=%q cleanup=%v after failure", copy, cleanup != nil)
+	}
+	if !strings.Contains(err.Error(), "maximum file count") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCopyWorkspaceCancellationCleansUpPartialCopy(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "large", strings.Repeat("x", 1<<20))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	copy, cleanup, err := CopyWorkspaceWithContext(ctx, root, WorkspaceLimits{MaxFileBytes: 2 << 20, MaxTotalBytes: 2 << 20, MaxFiles: 10})
+	if err == nil {
+		_ = cleanup()
+		t.Fatal("expected cancellation error")
+	}
+	if copy != "" || cleanup != nil {
+		t.Fatalf("copy=%q cleanup=%v after failure", copy, cleanup != nil)
+	}
+	if !strings.Contains(err.Error(), "workspace copy canceled") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

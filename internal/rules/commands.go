@@ -9,38 +9,103 @@ import (
 	"github.com/wenn-id/devparity/internal/nodecmd"
 )
 
+const maxWorkflowDriftEvidence = 256
+
 func evaluateWorkflowDrift(facts []model.Fact) model.Finding {
 	docs := make(map[string][]model.Fact)
 	workflows := make(map[string][]model.Fact)
+	seenDocs := make(map[model.Fact]struct{}, len(facts))
+	seenWorkflows := make(map[model.Fact]struct{}, len(facts))
 	for _, fact := range facts {
 		switch fact.Kind {
 		case model.FactKind("doc.command"):
-			docs[commandClass(fact)] = append(docs[commandClass(fact)], fact)
-		case model.FactKind("workflow.command"):
-			workflows[commandClass(fact)] = append(workflows[commandClass(fact)], fact)
-		}
-	}
-	var evidence []model.Fact
-	var classes []string
-	for class, docFacts := range docs {
-		workflowFacts := workflows[class]
-		if len(workflowFacts) == 0 {
-			continue
-		}
-		for _, fact := range docFacts {
-			for _, workflow := range workflowFacts {
-				if fact.Value != workflow.Value {
-					evidence = append(evidence, fact, workflow)
-					classes = append(classes, class)
-				}
+			if _, exists := seenDocs[fact]; exists {
+				continue
 			}
+			seenDocs[fact] = struct{}{}
+			class := commandClass(fact)
+			docs[class] = append(docs[class], fact)
+		case model.FactKind("workflow.command"):
+			if _, exists := seenWorkflows[fact]; exists {
+				continue
+			}
+			seenWorkflows[fact] = struct{}{}
+			class := commandClass(fact)
+			workflows[class] = append(workflows[class], fact)
 		}
 	}
-	if len(evidence) == 0 {
-		return finding("workflow-command-drift", model.SeverityWarning, model.StatusPass, "Documentation and workflow commands agree or are insufficient for comparison", nil, "No command authority is selected.")
+
+	classes := make([]string, 0, len(docs))
+	for class := range docs {
+		if len(workflows[class]) > 0 {
+			classes = append(classes, class)
+		}
 	}
 	sort.Strings(classes)
-	return finding("workflow-command-drift", model.SeverityWarning, model.StatusFinding, fmt.Sprintf("Documentation and workflow commands differ for %s", strings.Join(unique(classes), ", ")), evidence, "Review the command difference; DevParity reports evidence without choosing which command is correct.")
+
+	evidence := make([]model.Fact, 0, maxWorkflowDriftEvidence)
+	seenEvidence := make(map[model.Fact]struct{}, maxWorkflowDriftEvidence)
+	findingClasses := make([]string, 0, len(classes))
+	for _, class := range classes {
+		docFacts := docs[class]
+		workflowFacts := workflows[class]
+		workflowRepresentatives := uniqueValues(workflowFacts)
+		classFinding := false
+		for _, fact := range docFacts {
+			workflow, differs := differingWorkflowFact(workflowRepresentatives, fact.Value)
+			if !differs {
+				continue
+			}
+			classFinding = true
+			appendEvidence(&evidence, seenEvidence, fact)
+			appendEvidence(&evidence, seenEvidence, workflow)
+		}
+		if classFinding {
+			findingClasses = append(findingClasses, class)
+		}
+	}
+
+	if len(findingClasses) == 0 {
+		return finding("workflow-command-drift", model.SeverityWarning, model.StatusPass, "Documentation and workflow commands agree or are insufficient for comparison", nil, "No command authority is selected.")
+	}
+	return finding("workflow-command-drift", model.SeverityWarning, model.StatusFinding, fmt.Sprintf("Documentation and workflow commands differ for %s", strings.Join(findingClasses, ", ")), evidence, "Review the command difference; DevParity reports bounded, deduplicated evidence without choosing which command is correct.")
+}
+
+func uniqueValues(facts []model.Fact) []model.Fact {
+	values := make([]model.Fact, 0, len(facts))
+	seen := make(map[string]struct{}, len(facts))
+	for _, fact := range facts {
+		if _, exists := seen[fact.Value]; exists {
+			continue
+		}
+		seen[fact.Value] = struct{}{}
+		values = append(values, fact)
+	}
+	return values
+}
+
+func differingWorkflowFact(facts []model.Fact, value string) (model.Fact, bool) {
+	if len(facts) == 0 {
+		return model.Fact{}, false
+	}
+	if facts[0].Value != value {
+		return facts[0], true
+	}
+	if len(facts) > 1 {
+		return facts[1], true
+	}
+	return model.Fact{}, false
+}
+
+func appendEvidence(evidence *[]model.Fact, seen map[model.Fact]struct{}, fact model.Fact) {
+	if len(*evidence) >= maxWorkflowDriftEvidence {
+		return
+	}
+	if _, exists := seen[fact]; exists {
+		return
+	}
+	seen[fact] = struct{}{}
+	*evidence = append(*evidence, fact)
 }
 
 func commandClass(fact model.Fact) string {
@@ -70,17 +135,4 @@ func commandClass(fact model.Fact) string {
 		}
 		return command.Script
 	}
-}
-
-func unique(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
 }

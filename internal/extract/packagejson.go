@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/wenn-id/devparity/internal/model"
@@ -73,11 +74,7 @@ func PackageJSON(root, path string) ([]model.Fact, []model.Finding) {
 		scriptNames = append(scriptNames, name)
 	}
 	// Stable fact order keeps reports deterministic even though JSON objects are unordered.
-	for i := 1; i < len(scriptNames); i++ {
-		for j := i; j > 0 && scriptNames[j] < scriptNames[j-1]; j-- {
-			scriptNames[j], scriptNames[j-1] = scriptNames[j-1], scriptNames[j]
-		}
-	}
+	sort.Strings(scriptNames)
 	for _, name := range scriptNames {
 		field := "scripts." + name
 		facts = append(facts, model.Fact{

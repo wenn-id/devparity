@@ -1,9 +1,12 @@
 package extract
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/wenn-id/devparity/internal/model"
 )
@@ -25,6 +28,35 @@ func TestPackageJSONExtractsNodeManagerAndScripts(t *testing.T) {
 	assertFact(t, facts, "package.manager.declared", "package-manager", "pnpm", "packageManager", 3)
 	assertFact(t, facts, "package.script", "test", "node --test", "scripts.test", 4)
 	assertFact(t, facts, "package.script", "build", "tsc", "scripts.build", 4)
+}
+
+func TestPackageJSONSortsManyScriptsWithinRuntimeCeiling(t *testing.T) {
+	const scripts = 10_000
+	var builder strings.Builder
+	builder.WriteString(`{"scripts":{`)
+	for index := scripts - 1; index >= 0; index-- {
+		if index != scripts-1 {
+			builder.WriteByte(',')
+		}
+		fmt.Fprintf(&builder, `"script-%05d":"true"`, index)
+	}
+	builder.WriteString(`}}`)
+
+	root := t.TempDir()
+	writePackageFixture(t, root, "many.json", builder.String())
+	started := time.Now()
+	facts, findings := PackageJSON(root, "many.json")
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("many-script extraction took %s; want <= 5s", elapsed)
+	}
+	if len(findings) != 0 || len(facts) != scripts {
+		t.Fatalf("facts=%d findings=%#v", len(facts), findings)
+	}
+	for index := 1; index < len(facts); index++ {
+		if facts[index-1].Subject > facts[index].Subject {
+			t.Fatalf("scripts not sorted at %d: %q > %q", index, facts[index-1].Subject, facts[index].Subject)
+		}
+	}
 }
 
 func TestPackageJSONReportsMalformedAndUnsupportedManager(t *testing.T) {

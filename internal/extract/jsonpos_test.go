@@ -1,8 +1,11 @@
 package extract
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestJSONFieldLines(t *testing.T) {
@@ -44,5 +47,47 @@ func TestJSONFieldLinesRejectsDuplicateKeys(t *testing.T) {
 				t.Fatal("expected duplicate-key error")
 			}
 		})
+	}
+}
+
+func TestJSONFieldLinesLargeObjectStaysWithinRuntimeCeiling(t *testing.T) {
+	const fields = 50_000
+	var builder strings.Builder
+	builder.WriteByte('{')
+	for index := 0; index < fields; index++ {
+		if index > 0 {
+			builder.WriteByte(',')
+		}
+		fmt.Fprintf(&builder, `"key%d":"value"`, index)
+	}
+	builder.WriteByte('}')
+
+	started := time.Now()
+	lines, err := jsonFieldLines([]byte(builder.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("large JSON object took %s; want <= 5s", elapsed)
+	}
+	if len(lines) != fields {
+		t.Fatalf("mapped fields=%d, want %d", len(lines), fields)
+	}
+}
+
+func TestJSONFieldLinesRejectsFieldCountOverCeiling(t *testing.T) {
+	var builder strings.Builder
+	builder.WriteByte('{')
+	for index := 0; index <= maxJSONFields; index++ {
+		if index > 0 {
+			builder.WriteByte(',')
+		}
+		fmt.Fprintf(&builder, `"key%d":0`, index)
+	}
+	builder.WriteByte('}')
+
+	_, err := jsonFieldLines([]byte(builder.String()))
+	if err == nil || !strings.Contains(err.Error(), "field count") {
+		t.Fatalf("err=%v, want field-count ceiling", err)
 	}
 }

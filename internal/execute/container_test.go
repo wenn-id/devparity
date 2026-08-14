@@ -232,6 +232,25 @@ func TestRunContainerForceRemovesTimedOutContainerBeforeWorkspaceCleanup(t *test
 	}
 }
 
+func TestRunContainerChecksRuntimeBeforeWorkspaceCopy(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(string) (string, error) { return "", errors.New("runtime missing") }
+	commandFunc = func(_ context.Context, _ string, _ []string, _ int64) ([]byte, []byte, int, error) {
+		t.Fatal("runtime command must not run when runtime is unavailable")
+		return nil, nil, -1, nil
+	}
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "large", strings.Repeat("x", int(workspaceMaxFileBytes)+1))
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "true"}, Options{Root: root, NodeVersion: "22"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusSkipped || !strings.Contains(result.Stderr, "not installed") {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
 func TestRunContainerAttemptsCleanupAfterRuntimeError(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })

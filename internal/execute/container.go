@@ -35,16 +35,15 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	if version == "" {
 		return model.ExecutionResult{}, errors.New("container execution requires a concrete Node version")
 	}
-	workspace, workspaceCleanup, err := CopyWorkspace(opts.Root)
-	if err != nil {
-		return model.ExecutionResult{}, fmt.Errorf("container workspace setup failed: %s", redactor.Redact(err.Error()))
+	if opts.Timeout <= 0 {
+		opts.Timeout = defaultTimeout
 	}
-	defer func() {
-		if cleanupErr := workspaceCleanup(); cleanupErr != nil {
-			result = model.ExecutionResult{}
-			err = fmt.Errorf("container workspace cleanup failed: %s", redactor.Redact(cleanupErr.Error()))
-		}
-	}()
+	if opts.MaxOutput <= 0 {
+		opts.MaxOutput = defaultMaxOutput
+	}
+	commandContext, cancel := context.WithTimeout(ctx, opts.Timeout)
+	defer cancel()
+
 	runtimeName := ""
 	for _, candidate := range []string{"docker", "podman"} {
 		if _, lookErr := lookPath(candidate); lookErr == nil {
@@ -55,6 +54,19 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	if runtimeName == "" {
 		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: "docker or podman is not installed"}, nil
 	}
+	if err := checkWorkspaceContext(commandContext); err != nil {
+		return model.ExecutionResult{}, err
+	}
+	workspace, workspaceCleanup, err := CopyWorkspaceWithContext(commandContext, opts.Root, defaultWorkspaceLimits)
+	if err != nil {
+		return model.ExecutionResult{}, fmt.Errorf("container workspace setup failed: %s", redactor.Redact(err.Error()))
+	}
+	defer func() {
+		if cleanupErr := workspaceCleanup(); cleanupErr != nil {
+			result = model.ExecutionResult{}
+			err = fmt.Errorf("container workspace cleanup failed: %s", redactor.Redact(cleanupErr.Error()))
+		}
+	}()
 	shell, shellArgs, err := containerShell(block)
 	if err != nil {
 		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: redactor.Redact(err.Error())}, nil
@@ -94,14 +106,6 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	args = append(args, "-v", workspace+":/workspace", "-w", "/workspace", "node:"+version)
 	args = append(args, shell)
 	args = append(args, shellArgs...)
-	if opts.Timeout <= 0 {
-		opts.Timeout = defaultTimeout
-	}
-	if opts.MaxOutput <= 0 {
-		opts.MaxOutput = defaultMaxOutput
-	}
-	commandContext, cancel := context.WithTimeout(ctx, opts.Timeout)
-	defer cancel()
 	start := time.Now()
 	cleanupArmed = true
 	stdout, stderr, exit, runErr := commandFunc(commandContext, runtimeName, args, opts.MaxOutput)
