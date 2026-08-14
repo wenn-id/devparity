@@ -187,7 +187,7 @@ func TestGitHubEscapesMarkdownLinksAndHTML(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		`\[click\]\(https://attacker.example\)`,
+		`\[click\]\(https\://attacker.example\)`,
 		`\<script\>alert\(1\)\</script\>`,
 		`\*bold\*`,
 		`\_em\_`,
@@ -196,6 +196,32 @@ func TestGitHubEscapesMarkdownLinksAndHTML(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("markdown=%q, missing escaped value %q", got, want)
 		}
+	}
+}
+
+func TestGitHubEscapesBareURLAutolinks(t *testing.T) {
+	report := model.Report{
+		SchemaVersion: 1,
+		ToolVersion:   "test",
+		Repository:    "repo",
+		Summary:       model.Summary{Finding: 1},
+		Results: []model.Finding{{
+			RuleID:  "rule",
+			Status:  model.StatusFinding,
+			Message: "see https://attacker.example/path?q=1#x",
+		}},
+	}
+
+	var out bytes.Buffer
+	if err := GitHub(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if strings.Contains(got, "https://attacker.example") {
+		t.Fatalf("markdown=%q, bare URL still has an autolinkable scheme", got)
+	}
+	if !strings.Contains(got, `https\://attacker.example/path?q=1#x`) {
+		t.Fatalf("markdown=%q, missing neutralized URL", got)
 	}
 }
 

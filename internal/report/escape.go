@@ -32,7 +32,7 @@ func textField(value string) string {
 // are collapsed to spaces.
 func markdownCell(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)
-	for _, c := range []string{`|`, "`", `[`, `]`, `(`, `)`, `!`, `<`, `>`, `*`, `_`, `~`} {
+	for _, c := range []string{`|`, "`", `[`, `]`, `(`, `)`, `!`, `<`, `>`, `*`, `_`, `~`, `:`, `@`} {
 		value = strings.ReplaceAll(value, c, `\`+c)
 	}
 	value = strings.ReplaceAll(value, "\r\n", " ")
