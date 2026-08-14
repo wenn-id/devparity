@@ -24,10 +24,18 @@ var (
 func NewContainerGrant() Grant { return Grant{container: true} }
 
 func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts Options) (result model.ExecutionResult, err error) {
-	redactor := NewRedactor(nil)
 	if !grant.container {
 		return model.ExecutionResult{}, errors.New("container execution requires a container grant")
 	}
+	environment := opts.Environment
+	if environment == nil {
+		captured, snapshotErr := SnapshotEnvironment(opts.EnvNames)
+		if snapshotErr != nil {
+			return model.ExecutionResult{}, snapshotErr
+		}
+		environment = &captured
+	}
+	redactor := environment.redactor()
 	if opts.Root == "" {
 		return model.ExecutionResult{}, errors.New("container execution requires a repository root")
 	}
@@ -102,6 +110,9 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	args = append(args, "--cpus", "2", "--memory", "2g")
 	if runtime.GOOS != "windows" {
 		args = append(args, "--pids-limit", "256")
+	}
+	for _, variable := range environment.forwarded {
+		args = append(args, "-e", variable)
 	}
 	args = append(args, "-v", workspace+":/workspace", "-w", "/workspace", "node:"+version)
 	args = append(args, shell)

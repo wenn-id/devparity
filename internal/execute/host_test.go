@@ -26,7 +26,7 @@ func TestRunHostSuccessUsesMinimalForwardedEnvironment(t *testing.T) {
 	}
 	t.Setenv("DEVPARITY_TEST_SECRET", "exact-secret")
 	block := model.DocBlock{ID: "README.md:2", Shell: "sh", Script: `printf '%s|%s|%s' "$DEVPARITY_TEST_SECRET" "${DEVPARITY_TEST_ABSENT-}" "${DEVPARITY_NOT_FORWARDED-}"`}
-	result, err := RunHost(context.Background(), grant, block, Options{Root: t.TempDir(), EnvNames: []string{"DEVPARITY_TEST_SECRET", "DEVPARITY_TEST_ABSENT"}, Timeout: 10 * time.Second})
+	result, err := RunHost(context.Background(), grant, block, Options{Root: t.TempDir(), EnvNames: []string{"DEVPARITY_TEST_SECRET"}, Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,6 +38,69 @@ func TestRunHostSuccessUsesMinimalForwardedEnvironment(t *testing.T) {
 	}
 	if !strings.Contains(result.Stdout, "[REDACTED]") {
 		t.Fatalf("result=%#v, expected redaction", result)
+	}
+}
+
+func TestRunHostRejectsMissingRequestedEnvironmentBeforeExecution(t *testing.T) {
+	grant, err := NewHostGrant(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "must-not-run")
+	block := model.DocBlock{ID: "README.md:2", Shell: "sh", Script: "touch " + shellQuote(marker)}
+	_, err = RunHost(context.Background(), grant, block, Options{
+		Root:     t.TempDir(),
+		EnvNames: []string{"DEVPARITY_TEST_MISSING"},
+		Timeout:  time.Second,
+	})
+	if err == nil || !strings.Contains(err.Error(), `requested environment variable "DEVPARITY_TEST_MISSING" is not set`) {
+		t.Fatalf("err=%v, want missing environment error", err)
+	}
+	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+		t.Fatalf("command ran despite missing environment: %v", statErr)
+	}
+}
+
+func TestRunHostForwardsEmptyRequestedEnvironment(t *testing.T) {
+	grant, err := NewHostGrant(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVPARITY_TEST_EMPTY", "")
+	result, err := RunHost(context.Background(), grant, model.DocBlock{
+		ID:     "README.md:2",
+		Shell:  "sh",
+		Script: `if [ "${DEVPARITY_TEST_EMPTY+x}" != x ]; then exit 9; fi; printf '<%s>' "$DEVPARITY_TEST_EMPTY"`,
+	}, Options{Root: t.TempDir(), EnvNames: []string{"DEVPARITY_TEST_EMPTY"}, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusPass || result.ExitCode != 0 || result.Stdout != "<>" {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestRunHostUsesCapturedEnvironmentSnapshot(t *testing.T) {
+	grant, err := NewHostGrant(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVPARITY_TEST_SNAPSHOT", "before")
+	snapshot, err := SnapshotEnvironment([]string{"DEVPARITY_TEST_SNAPSHOT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVPARITY_TEST_SNAPSHOT", "after")
+	result, err := RunHost(context.Background(), grant, model.DocBlock{
+		ID:     "README.md:2",
+		Shell:  "sh",
+		Script: `printf '%s' "$DEVPARITY_TEST_SNAPSHOT"`,
+	}, Options{Root: t.TempDir(), Environment: &snapshot, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusPass || result.Stdout != "[REDACTED]" {
+		t.Fatalf("result=%#v", result)
 	}
 }
 

@@ -40,7 +40,7 @@ Bun is explicitly unsupported in the beta. Dynamic workflow expressions, reusabl
 devparity docs verify . --execute --trust-repository
 ```
 
-The command prints a warning before execution. Use repeated `--env NAME` to forward named environment variables and `--timeout 10m` to set a timeout. Environment inheritance is otherwise allowlisted and output is capped at 1 MiB per stream and redacted before reporting.
+The command prints a warning before execution. Use repeated `--env NAME` to forward named environment variables and `--timeout 10m` to set a timeout. Requested variables are snapshotted before execution: a missing variable is an operational error (exit 2), while an explicitly empty variable is forwarded as `NAME=`. Environment inheritance is otherwise allowlisted and output is capped at 1 MiB per stream and redacted before reporting.
 
 Container execution copies the repository to a temporary workspace, excludes `.git`, `node_modules`, and `.devparity`, rejects symlinks and special files, uses a non-root user, drops capabilities, defaults to no network, and limits CPU, memory, and processes:
 
