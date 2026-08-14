@@ -148,6 +148,16 @@ func TestWorkflowUnsupportedFormsAreInconclusive(t *testing.T) {
           node-version: ${{ matrix.node }}
 `,
 		},
+		{
+			name: "multiline run",
+			body: `jobs:
+  test:
+    steps:
+      - run: |
+          npm
+          ci
+`,
+		},
 	}
 
 	for _, test := range tests {

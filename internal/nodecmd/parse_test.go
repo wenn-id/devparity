@@ -32,6 +32,8 @@ func TestParseRejectsShellIndirectionAndOperators(t *testing.T) {
 		"npm ci $(date)",
 		"npm ci `date`",
 		"npm $COMMAND",
+		"npm\nci",
+		"npm\r\nci",
 	} {
 		if got, ok := Parse(line); ok {
 			t.Fatalf("%q unexpectedly parsed as %#v", line, got)

@@ -10,6 +10,9 @@ type Command struct {
 }
 
 func Parse(line string) (Command, bool) {
+	if strings.ContainsAny(line, "\r\n") {
+		return Command{}, false
+	}
 	fields := strings.Fields(line)
 	if len(fields) == 0 || unsafe(fields) {
 		return Command{}, false
