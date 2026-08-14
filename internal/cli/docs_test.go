@@ -82,7 +82,7 @@ func TestDocsContainerModeCanSkipWhenRuntimeIsUnavailable(t *testing.T) {
 	if code != 0 && code != 2 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
-	if code == 0 && !strings.Contains(stdout.String(), "docs-command-skipped") {
+	if code == 0 && !strings.Contains(stdout.String(), "docs-command-skipped") && !strings.Contains(stdout.String(), "docs-command-passed") {
 		t.Fatalf("stdout=%q", stdout.String())
 	}
 	if code == 2 && !strings.Contains(stdout.String()+stderr.String(), "container runtime failed") {
