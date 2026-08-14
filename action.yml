@@ -12,7 +12,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - shell: bash
+    - if: runner.os != 'Windows'
+      shell: bash
       env:
         DEVPARITY_VERSION: ${{ inputs.version }}
         DEVPARITY_STRICT: ${{ inputs.strict }}
@@ -20,16 +21,62 @@ runs:
         set -euo pipefail
         case "${RUNNER_OS}-${RUNNER_ARCH}" in
           Linux-X64) asset=devparity-linux-amd64 ;;
+          Linux-ARM64) asset=devparity-linux-arm64 ;;
           macOS-X64) asset=devparity-darwin-amd64 ;;
           macOS-ARM64) asset=devparity-darwin-arm64 ;;
-          Windows-X64) asset=devparity-windows-amd64.exe ;;
           *) echo "unsupported runner" >&2; exit 2 ;;
         esac
         base="https://github.com/wenn-id/devparity/releases/download/${DEVPARITY_VERSION}"
-        curl -fsSLO "${base}/${asset}"
-        curl -fsSLO "${base}/checksums.txt"
+        workdir="$(mktemp -d "${RUNNER_TEMP%/}/devparity.XXXXXX")"
+        trap 'rm -rf "$workdir"' EXIT
+        curl --fail --location --silent --show-error --output "$workdir/$asset" "${base}/${asset}"
+        curl --fail --location --silent --show-error --output "$workdir/checksums.txt" "${base}/checksums.txt"
+        cd "$workdir"
         grep "  ${asset}$" checksums.txt | sha256sum -c -
-        chmod +x "${asset}"
+        chmod +x "$asset"
         args=(doctor --format github)
         if [[ "${DEVPARITY_STRICT}" == "true" ]]; then args+=(--strict); fi
-        "./${asset}" "${args[@]}"
+        cd "${GITHUB_WORKSPACE:-$OLDPWD}"
+        "$workdir/$asset" "${args[@]}"
+
+    - if: runner.os == 'Windows'
+      shell: powershell
+      env:
+        DEVPARITY_VERSION: ${{ inputs.version }}
+        DEVPARITY_STRICT: ${{ inputs.strict }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $workDir = $null
+        try {
+          switch ("$env:RUNNER_OS-$env:RUNNER_ARCH") {
+            'Windows-X64' { $asset = 'devparity-windows-amd64.exe'; break }
+            default { throw "unsupported runner $env:RUNNER_OS-$env:RUNNER_ARCH" }
+          }
+          $base = "https://github.com/wenn-id/devparity/releases/download/$env:DEVPARITY_VERSION"
+          $workDir = Join-Path $env:RUNNER_TEMP ("devparity-" + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+          $binary = Join-Path $workDir $asset
+          $checksums = Join-Path $workDir 'checksums.txt'
+          Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -OutFile $binary
+          Invoke-WebRequest -UseBasicParsing -Uri "$base/checksums.txt" -OutFile $checksums
+
+          $checksumLine = Get-Content -LiteralPath $checksums |
+            Where-Object { $_ -match ('^([0-9a-fA-F]{64})  ' + [regex]::Escape($asset) + '$') } |
+            Select-Object -First 1
+          if (-not $checksumLine) { throw "checksum entry missing for $asset" }
+          $expected = ($checksumLine -split '\s+', 2)[0].ToUpperInvariant()
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash.ToUpperInvariant()
+          if ($actual -ne $expected) { throw "checksum mismatch for $asset" }
+
+          $arguments = @('doctor', '--format', 'github')
+          if ($env:DEVPARITY_STRICT -eq 'true') { $arguments += '--strict' }
+          Push-Location $env:GITHUB_WORKSPACE
+          try {
+            & $binary @arguments
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Pop-Location
+          }
+        } finally {
+          if ($workDir) { Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
