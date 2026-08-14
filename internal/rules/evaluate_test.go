@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -58,6 +59,50 @@ func TestEvaluateWorkflowCommandDrift(t *testing.T) {
 	}), "workflow-command-drift")
 	if finding.Status != model.StatusFinding || finding.Severity != model.SeverityWarning || len(finding.Evidence) != 2 {
 		t.Fatalf("finding=%#v", finding)
+	}
+}
+
+func TestEvaluateWorkflowCommandDriftDeduplicatesEvidence(t *testing.T) {
+	facts := make([]model.Fact, 0, 200)
+	for index := 0; index < 100; index++ {
+		facts = append(facts,
+			fact("doc.command", "test", "npm test", "README.md", 8),
+			fact("workflow.command", "test:ci", "npm run test:ci", ".github/workflows/ci.yml", 12),
+		)
+	}
+
+	finding := mustFinding(t, Evaluate(facts), "workflow-command-drift")
+	if finding.Status != model.StatusFinding {
+		t.Fatalf("finding=%#v", finding)
+	}
+	if len(finding.Evidence) != 2 {
+		t.Fatalf("evidence=%d, want 2 deduplicated facts: %#v", len(finding.Evidence), finding.Evidence)
+	}
+	seen := make(map[model.Fact]struct{}, len(finding.Evidence))
+	for _, evidence := range finding.Evidence {
+		if _, exists := seen[evidence]; exists {
+			t.Fatalf("duplicate evidence=%#v", evidence)
+		}
+		seen[evidence] = struct{}{}
+	}
+}
+
+func TestEvaluateWorkflowCommandDriftBoundsAdversarialEvidence(t *testing.T) {
+	const commandCount = 500
+	facts := make([]model.Fact, 0, commandCount*2)
+	for index := 0; index < commandCount; index++ {
+		facts = append(facts,
+			fact("doc.command", "test", fmt.Sprintf("npm run doc-%d", index), "README.md", index+1),
+			fact("workflow.command", "test:ci", fmt.Sprintf("npm run workflow-%d", index), ".github/workflows/ci.yml", index+1),
+		)
+	}
+
+	finding := mustFinding(t, Evaluate(facts), "workflow-command-drift")
+	if finding.Status != model.StatusFinding {
+		t.Fatalf("finding=%#v", finding)
+	}
+	if len(finding.Evidence) > 256 {
+		t.Fatalf("evidence=%d, want <= 256 facts", len(finding.Evidence))
 	}
 }
 

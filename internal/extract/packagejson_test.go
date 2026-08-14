@@ -1,8 +1,10 @@
 package extract
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/wenn-id/devparity/internal/model"
@@ -25,6 +27,59 @@ func TestPackageJSONExtractsNodeManagerAndScripts(t *testing.T) {
 	assertFact(t, facts, "package.manager.declared", "package-manager", "pnpm", "packageManager", 3)
 	assertFact(t, facts, "package.script", "test", "node --test", "scripts.test", 4)
 	assertFact(t, facts, "package.script", "build", "tsc", "scripts.build", 4)
+}
+
+func TestPackageJSONSortsManyScriptsWithinRuntimeCeiling(t *testing.T) {
+	const scripts = 10_000
+	var builder strings.Builder
+	builder.WriteString(`{"scripts":{`)
+	for index := scripts - 1; index >= 0; index-- {
+		if index != scripts-1 {
+			builder.WriteByte(',')
+		}
+		fmt.Fprintf(&builder, `"script-%05d":"true"`, index)
+	}
+	builder.WriteString(`}}`)
+
+	root := t.TempDir()
+	writePackageFixture(t, root, "many.json", builder.String())
+	facts, findings := PackageJSON(root, "many.json")
+	if len(findings) != 0 || len(facts) != scripts {
+		t.Fatalf("facts=%d findings=%#v", len(facts), findings)
+	}
+	for index := 1; index < len(facts); index++ {
+		if facts[index-1].Subject > facts[index].Subject {
+			t.Fatalf("scripts not sorted at %d: %q > %q", index, facts[index-1].Subject, facts[index].Subject)
+		}
+	}
+}
+
+func benchmarkPackageJSONInput() (string, []byte) {
+	const scripts = 10_000
+	var builder strings.Builder
+	builder.WriteString(`{"scripts":{`)
+	for index := scripts - 1; index >= 0; index-- {
+		if index != scripts-1 {
+			builder.WriteByte(',')
+		}
+		fmt.Fprintf(&builder, `"script-%05d":"true"`, index)
+	}
+	builder.WriteString(`}}`)
+	return "many.json", []byte(builder.String())
+}
+
+func BenchmarkPackageJSON(b *testing.B) {
+	name, data := benchmarkPackageJSONInput()
+	root := b.TempDir()
+	if err := os.WriteFile(filepath.Join(root, name), data, 0o644); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		if _, findings := PackageJSON(root, name); len(findings) != 0 {
+			b.Fatalf("findings=%#v", findings)
+		}
+	}
 }
 
 func TestPackageJSONReportsMalformedAndUnsupportedManager(t *testing.T) {
