@@ -4,6 +4,7 @@ package execute
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
@@ -15,6 +16,8 @@ const (
 	jobObjectLimitKillOnJobClose           = 0x2000
 	processSetQuota                        = 0x0100
 	processTerminate                       = 0x0001
+	processSuspendResume                   = 0x0800
+	createSuspended                        = 0x00000004
 )
 
 type windowsProcessTree struct {
@@ -57,6 +60,8 @@ var (
 	setInformationJobObject  = kernel32.NewProc("SetInformationJobObject")
 	assignProcessToJobObject = kernel32.NewProc("AssignProcessToJobObject")
 	terminateJobObject       = kernel32.NewProc("TerminateJobObject")
+	ntdll                    = syscall.NewLazyDLL("ntdll.dll")
+	ntResumeProcess          = ntdll.NewProc("NtResumeProcess")
 )
 
 func configureHostProcessTree(command *exec.Cmd) (hostProcessTree, error) {
@@ -77,12 +82,12 @@ func configureHostProcessTree(command *exec.Cmd) (hostProcessTree, error) {
 		_ = tree.Close()
 		return nil, err
 	}
-	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}
+	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | createSuspended}
 	return tree, nil
 }
 
 func (tree *windowsProcessTree) Attach(process *os.Process) error {
-	processHandle, err := syscall.OpenProcess(processSetQuota|processTerminate, false, uint32(process.Pid))
+	processHandle, err := syscall.OpenProcess(processSetQuota|processTerminate|processSuspendResume, false, uint32(process.Pid))
 	if err != nil {
 		return err
 	}
@@ -90,6 +95,10 @@ func (tree *windowsProcessTree) Attach(process *os.Process) error {
 	result, _, callErr := assignProcessToJobObject.Call(uintptr(tree.job), uintptr(processHandle))
 	if result == 0 {
 		return callErr
+	}
+	status, _, _ := ntResumeProcess.Call(uintptr(processHandle))
+	if status != 0 {
+		return fmt.Errorf("NtResumeProcess failed with status 0x%x", status)
 	}
 	return nil
 }
