@@ -8,11 +8,11 @@ import (
 )
 
 func GitHub(w io.Writer, value model.Report) error {
-	if _, err := fmt.Fprintf(w, "## DevParity\n\nRepository: `%s`\n\n| Status | Rule | Message |\n|---|---|---|\n", value.Repository); err != nil {
+	if _, err := fmt.Fprintf(w, "## DevParity\n\nRepository: %s\n\n| Status | Rule | Message |\n|---|---|---|\n", markdownCell(value.Repository)); err != nil {
 		return err
 	}
 	for _, finding := range value.Results {
-		if _, err := fmt.Fprintf(w, "| `%s` | `%s` | %s |\n", finding.Status, finding.RuleID, finding.Message); err != nil {
+		if _, err := fmt.Fprintf(w, "| %s | %s | %s |\n", markdownCell(string(finding.Status)), markdownCell(finding.RuleID), markdownCell(finding.Message)); err != nil {
 			return err
 		}
 	}
