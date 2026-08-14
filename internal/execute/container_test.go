@@ -73,6 +73,63 @@ func TestRuntimeFailureRecognizesUnavailableContainerRuntime(t *testing.T) {
 	}
 }
 
+func TestRunContainerDoesNotClassifySpoofedRuntimeStderr(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(string) (string, error) { return "/fake/docker", nil }
+	commandFunc = func(_ context.Context, _ string, _ []string) ([]byte, []byte, int, error) {
+		return []byte("permission denied ghp_abcdefghijklmnopqrstuvwxyz123456"), []byte("cannot connect ghp_abcdefghijklmnopqrstuvwxyz123456"), 1, nil
+	}
+
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "false"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if result.Status != model.StatusFinding || result.ExitCode != 1 {
+		t.Fatalf("result=%#v", result)
+	}
+	if !strings.Contains(result.Stderr, "cannot connect") {
+		t.Fatalf("stderr=%q lost command output", result.Stderr)
+	}
+	if strings.Contains(result.Stdout+result.Stderr, "ghp_abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("token leaked in result=%#v", result)
+	}
+}
+
+func TestRunContainerRedactsExit125RuntimeFailure(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(string) (string, error) { return "/fake/docker", nil }
+	commandFunc = func(_ context.Context, _ string, _ []string) ([]byte, []byte, int, error) {
+		return nil, []byte("runtime unavailable ghp_abcdefghijklmnopqrstuvwxyz123456"), 125, nil
+	}
+
+	_, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err == nil {
+		t.Fatal("expected runtime error")
+	}
+	if strings.Contains(err.Error(), "ghp_abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("token leaked in error=%q", err)
+	}
+}
+
+func TestRunContainerRedactsCommandError(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(string) (string, error) { return "/fake/docker", nil }
+	commandFunc = func(_ context.Context, _ string, _ []string) ([]byte, []byte, int, error) {
+		return nil, nil, -1, errors.New("cannot start runtime ghp_abcdefghijklmnopqrstuvwxyz123456")
+	}
+
+	_, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err == nil {
+		t.Fatal("expected runtime error")
+	}
+	if strings.Contains(err.Error(), "ghp_abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("token leaked in error=%q", err)
+	}
+}
+
 func TestRunContainerAllowNetworkRemovesOnlyNetworkRestriction(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
