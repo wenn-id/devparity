@@ -115,6 +115,26 @@ func TestEvaluateUnsupportedNodeConstraintIsInconclusive(t *testing.T) {
 	}
 }
 
+func TestEvaluateCompatibleHyphenRangePass(t *testing.T) {
+	finding := mustFinding(t, Evaluate([]model.Fact{
+		fact("node.constraint", "node", "20.1.0 - 22.9.9", "package.json", 3),
+		fact("node.constraint", "node", "22", ".nvmrc", 1),
+	}), "node-version-conflict")
+	if finding.Status != model.StatusPass {
+		t.Fatalf("finding=%#v", finding)
+	}
+}
+
+func TestEvaluateIncompatibleHyphenRangeConflict(t *testing.T) {
+	finding := mustFinding(t, Evaluate([]model.Fact{
+		fact("node.constraint", "node", "20.1.0 - 22.9.9", "package.json", 3),
+		fact("node.constraint", "node", "23", ".nvmrc", 1),
+	}), "node-version-conflict")
+	if finding.Status != model.StatusFinding {
+		t.Fatalf("finding=%#v", finding)
+	}
+}
+
 func mustFinding(t *testing.T, findings []model.Finding, ruleID string) model.Finding {
 	t.Helper()
 	for _, finding := range findings {
