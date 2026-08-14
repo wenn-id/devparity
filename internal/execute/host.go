@@ -47,6 +47,13 @@ func RunHost(ctx context.Context, grant Grant, block model.DocBlock, opts Option
 	commandContext, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 	command := exec.CommandContext(commandContext, executable, args...)
+	processTree, err := configureHostProcessTree(command)
+	if err != nil {
+		return model.ExecutionResult{}, fmt.Errorf("host process tree setup failed: %w", err)
+	}
+	defer processTree.Close()
+	command.Cancel = func() error { return processTree.Cancel(command.Process) }
+	command.WaitDelay = hostWaitDelay
 	if opts.Root != "" {
 		command.Dir = opts.Root
 	}
@@ -57,7 +64,17 @@ func RunHost(ctx context.Context, grant Grant, block model.DocBlock, opts Option
 	command.Stdout = stdout
 	command.Stderr = stderr
 	start := time.Now()
-	runErr := command.Run()
+	var runErr error
+	if err := command.Start(); err != nil {
+		runErr = err
+	} else if err := processTree.Attach(command.Process); err != nil {
+		_ = processTree.Cancel(command.Process)
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return model.ExecutionResult{}, fmt.Errorf("host process tree attach failed: %w", err)
+	} else {
+		runErr = command.Wait()
+	}
 	result := model.ExecutionResult{
 		BlockID:  block.ID,
 		Mode:     "host",
