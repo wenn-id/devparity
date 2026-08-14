@@ -93,7 +93,7 @@ Without an execution flag, the command only validates marked blocks and referenc
 
 `--execute` and `--container` are mutually exclusive. Host execution is rejected unless `--trust-repository` is present in the same invocation. Trust is never persisted.
 
-Execution timeout defaults to ten minutes. Each `--env <name>` forwards the current host value of that named variable. An absent named variable is an operational error reported before execution.
+Execution timeout defaults to ten minutes. Each `--env <name>` snapshots the current host value before execution. An absent named variable is an operational error reported before execution; an explicitly empty value is valid and is forwarded as `NAME=`.
 
 Container execution derives a concrete Node version from an unambiguous source such as `.nvmrc` or `.node-version`. If only a range or conflicting values exist, execution is `inconclusive` until the user supplies `--node-version`.
 

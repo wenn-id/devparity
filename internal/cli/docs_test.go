@@ -63,6 +63,37 @@ func TestDocsExecutionRequiresCompleteTrustFlags(t *testing.T) {
 	}
 }
 
+func TestDocsHostExecutionRejectsMissingEnvironmentBeforeRunning(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "must-not-run")
+	writeCLIFile(t, root, "package.json", `{"scripts":{"test":"node --test"}}`)
+	writeCLIFile(t, root, "README.md", "<!-- devparity:run -->\n```sh\ntouch "+marker+"\n```\n")
+	const variable = "DEVPARITY_TEST_CLI_MISSING"
+	previous, wasSet := os.LookupEnv(variable)
+	if err := os.Unsetenv(variable); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if wasSet {
+			_ = os.Setenv(variable, previous)
+		} else {
+			_ = os.Unsetenv(variable)
+		}
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"docs", "verify", root, "--execute", "--trust-repository", "--env", variable}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), `requested environment variable "`+variable+`" is not set`) {
+		t.Fatalf("stderr=%q", stderr.String())
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("documentation command ran despite missing environment: %v", err)
+	}
+}
+
 func TestDocsHostExecutionReturnsFailureExitCode(t *testing.T) {
 	malicious := filepath.Join("..", "..", "testdata", "repos", "malicious-docs")
 	var stdout, stderr bytes.Buffer

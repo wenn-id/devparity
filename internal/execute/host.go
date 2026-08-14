@@ -19,17 +19,35 @@ const (
 )
 
 type Options struct {
-	Root         string
-	Timeout      time.Duration
-	MaxOutput    int64
-	EnvNames     []string
+	Root        string
+	Timeout     time.Duration
+	MaxOutput   int64
+	EnvNames    []string
+	Environment *EnvironmentSnapshot
+
 	AllowNetwork bool
 	NodeVersion  string
+}
+
+// EnvironmentSnapshot contains the exact values selected for forwarding and
+// redaction. Its fields are private so callers cannot change the snapshot
+// after it has been captured.
+type EnvironmentSnapshot struct {
+	forwarded []string
+	secrets   []string
 }
 
 func RunHost(ctx context.Context, grant Grant, block model.DocBlock, opts Options) (model.ExecutionResult, error) {
 	if !grant.host {
 		return model.ExecutionResult{}, errors.New("host execution requires a host grant")
+	}
+	environment := opts.Environment
+	if environment == nil {
+		captured, snapshotErr := SnapshotEnvironment(opts.EnvNames)
+		if snapshotErr != nil {
+			return model.ExecutionResult{}, snapshotErr
+		}
+		environment = &captured
 	}
 	executable, args, err := shellCommand(block)
 	if err != nil {
@@ -57,8 +75,7 @@ func RunHost(ctx context.Context, grant Grant, block model.DocBlock, opts Option
 	if opts.Root != "" {
 		command.Dir = opts.Root
 	}
-	forwarded := forwardedEnvironment(opts.EnvNames)
-	command.Env = minimalEnvironment(forwarded)
+	command.Env = minimalEnvironment(environment.forwarded)
 	stdout := &cappedWriter{max: opts.MaxOutput}
 	stderr := &cappedWriter{max: opts.MaxOutput}
 	command.Stdout = stdout
@@ -79,8 +96,8 @@ func RunHost(ctx context.Context, grant Grant, block model.DocBlock, opts Option
 		BlockID:  block.ID,
 		Mode:     "host",
 		Duration: time.Since(start).Milliseconds(),
-		Stdout:   NewRedactor(forwardedSecrets(opts.EnvNames)).Redact(stdout.String()),
-		Stderr:   NewRedactor(forwardedSecrets(opts.EnvNames)).Redact(stderr.String()),
+		Stdout:   environment.redactor().Redact(stdout.String()),
+		Stderr:   environment.redactor().Redact(stderr.String()),
 		Status:   model.StatusPass,
 	}
 	if runErr == nil {
@@ -109,24 +126,28 @@ func shellCommand(block model.DocBlock) (string, []string, error) {
 	}
 }
 
-func forwardedEnvironment(names []string) []string {
-	values := make([]string, 0, len(names))
+func SnapshotEnvironment(names []string) (EnvironmentSnapshot, error) {
+	snapshot := EnvironmentSnapshot{
+		forwarded: make([]string, 0, len(names)),
+		secrets:   make([]string, 0, len(names)),
+	}
 	for _, name := range names {
-		if value, ok := os.LookupEnv(name); ok && value != "" {
-			values = append(values, name+"="+value)
+		value, ok := os.LookupEnv(name)
+		if !ok {
+			return EnvironmentSnapshot{}, fmt.Errorf("requested environment variable %q is not set", name)
+		}
+		// Empty values are explicit and are forwarded as NAME=; they are not
+		// useful redaction patterns, so only non-empty values are retained there.
+		snapshot.forwarded = append(snapshot.forwarded, name+"="+value)
+		if value != "" {
+			snapshot.secrets = append(snapshot.secrets, value)
 		}
 	}
-	return values
+	return snapshot, nil
 }
 
-func forwardedSecrets(names []string) []string {
-	values := make([]string, 0, len(names))
-	for _, name := range names {
-		if value, ok := os.LookupEnv(name); ok && value != "" {
-			values = append(values, value)
-		}
-	}
-	return values
+func (snapshot EnvironmentSnapshot) redactor() Redactor {
+	return NewRedactor(snapshot.secrets)
 }
 
 func minimalEnvironment(forwarded []string) []string {

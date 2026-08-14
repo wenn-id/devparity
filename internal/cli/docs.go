@@ -86,9 +86,14 @@ func runDocs(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 2
 		}
+		environment, environmentErr := execute.SnapshotEnvironment(envNames)
+		if environmentErr != nil {
+			fmt.Fprintln(stderr, environmentErr)
+			return 2
+		}
 		results := make([]model.ExecutionResult, 0, len(blocks))
 		for _, block := range blocks {
-			options := execute.Options{Root: value.Repository, Timeout: *timeout, EnvNames: envNames, AllowNetwork: *allowNetwork, NodeVersion: *nodeVersion}
+			options := execute.Options{Root: value.Repository, Timeout: *timeout, EnvNames: envNames, Environment: &environment, AllowNetwork: *allowNetwork, NodeVersion: *nodeVersion}
 			var result model.ExecutionResult
 			var runErr error
 			if *containerMode {
