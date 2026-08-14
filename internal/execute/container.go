@@ -24,6 +24,7 @@ var (
 func NewContainerGrant() Grant { return Grant{container: true} }
 
 func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts Options) (result model.ExecutionResult, err error) {
+	redactor := NewRedactor(nil)
 	if !grant.container {
 		return model.ExecutionResult{}, errors.New("container execution requires a container grant")
 	}
@@ -36,12 +37,12 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	}
 	workspace, workspaceCleanup, err := CopyWorkspace(opts.Root)
 	if err != nil {
-		return model.ExecutionResult{}, err
+		return model.ExecutionResult{}, fmt.Errorf("container workspace setup failed: %s", redactor.Redact(err.Error()))
 	}
 	defer func() {
 		if cleanupErr := workspaceCleanup(); cleanupErr != nil {
 			result = model.ExecutionResult{}
-			err = fmt.Errorf("container workspace cleanup failed: %w", cleanupErr)
+			err = fmt.Errorf("container workspace cleanup failed: %s", redactor.Redact(cleanupErr.Error()))
 		}
 	}()
 	runtimeName := ""
@@ -56,29 +57,29 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	}
 	shell, shellArgs, err := containerShell(block)
 	if err != nil {
-		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: err.Error()}, nil
+		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: redactor.Redact(err.Error())}, nil
 	}
 	containerName, err := uniqueContainerName()
 	if err != nil {
-		return model.ExecutionResult{}, fmt.Errorf("container name generation failed: %w", err)
+		return model.ExecutionResult{}, fmt.Errorf("container name generation failed: %s", redactor.Redact(err.Error()))
 	}
 	cleanupArmed := false
 	defer func() {
 		if !cleanupArmed {
 			return
 		}
-		if cleanupErr := forceRemoveContainer(runtimeName, containerName, opts.MaxOutput); cleanupErr != nil {
-			cleanupFailure := fmt.Errorf("container cleanup failed: %w", cleanupErr)
+		if cleanupErr := forceRemoveContainer(runtimeName, containerName, opts.MaxOutput, redactor); cleanupErr != nil {
+			cleanupFailure := fmt.Errorf("container cleanup failed: %s", redactor.Redact(cleanupErr.Error()))
 			priorResult := result
 			result = model.ExecutionResult{}
 			if err == nil {
 				if priorResult.Status == model.StatusFinding {
-					err = fmt.Errorf("container runtime failed: exit code %d; %w", priorResult.ExitCode, cleanupFailure)
+					err = fmt.Errorf("container runtime failed: exit code %d; %s", priorResult.ExitCode, cleanupFailure.Error())
 				} else {
 					err = cleanupFailure
 				}
 			} else {
-				err = fmt.Errorf("%v; %w", err, cleanupFailure)
+				err = fmt.Errorf("%s; %s", redactor.Redact(err.Error()), cleanupFailure.Error())
 			}
 		}
 	}()
@@ -105,15 +106,15 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	cleanupArmed = true
 	stdout, stderr, exit, runErr := commandFunc(commandContext, runtimeName, args, opts.MaxOutput)
 	if runErr != nil {
-		return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %w", runErr)
+		return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %s", redactor.Redact(runErr.Error()))
 	}
 	// The container process exit code is authoritative. Repository commands control
 	// stderr, so its text must never reclassify a successful runtime invocation.
-	result = model.ExecutionResult{BlockID: block.ID, Mode: "container", ExitCode: exit, Duration: time.Since(start).Milliseconds(), Stdout: NewRedactor(nil).Redact(string(stdout)), Stderr: NewRedactor(nil).Redact(string(stderr)), Status: model.StatusPass}
+	result = model.ExecutionResult{BlockID: block.ID, Mode: "container", ExitCode: exit, Duration: time.Since(start).Milliseconds(), Stdout: redactor.Redact(string(stdout)), Stderr: redactor.Redact(string(stderr)), Status: model.StatusPass}
 	if exit != 0 || commandContext.Err() != nil {
 		result.Status = model.StatusFinding
 		if commandContext.Err() != nil {
-			result.Stderr = strings.TrimSpace(result.Stderr + "\n" + commandContext.Err().Error())
+			result.Stderr = strings.TrimSpace(result.Stderr + "\n" + redactor.Redact(commandContext.Err().Error()))
 		}
 	}
 	return result, nil
@@ -127,12 +128,12 @@ func uniqueContainerName() (string, error) {
 	return "devparity-" + hex.EncodeToString(suffix[:]), nil
 }
 
-func forceRemoveContainer(runtimeName, containerName string, maxOutput int64) error {
+func forceRemoveContainer(runtimeName, containerName string, maxOutput int64, redactor Redactor) error {
 	cleanupContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_, stderr, exit, err := commandFunc(cleanupContext, runtimeName, []string{"rm", "-f", containerName}, maxOutput)
 	if err != nil {
-		return err
+		return errors.New(redactor.Redact(err.Error()))
 	}
 	if exit == 0 || containerNotFound(stderr) {
 		return nil
@@ -141,7 +142,7 @@ func forceRemoveContainer(runtimeName, containerName string, maxOutput int64) er
 	if message == "" {
 		message = fmt.Sprintf("exit code %d", exit)
 	}
-	return errors.New(NewRedactor(nil).Redact(message))
+	return errors.New(redactor.Redact(message))
 }
 
 func containerNotFound(stderr []byte) bool {

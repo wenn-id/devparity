@@ -124,14 +124,60 @@ func TestRunContainerDoesNotClassifyCommandStderrAsRuntimeFailure(t *testing.T) 
 		if args[0] == "rm" {
 			return nil, nil, 0, nil
 		}
-		return []byte("ok"), []byte("permission denied ghp_abcd1234"), 0, nil
+		return []byte("permission denied ghp_abcd1234"), []byte("cannot connect ghp_abcd1234"), 0, nil
 	}
 	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "README.md:2", Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != model.StatusPass || !strings.Contains(result.Stderr, "[REDACTED]") {
+	if result.Status != model.StatusPass || !strings.Contains(result.Stdout, "permission denied") || !strings.Contains(result.Stderr, "cannot connect") || !strings.Contains(result.Stdout+result.Stderr, "[REDACTED]") || strings.Contains(result.Stdout+result.Stderr, "ghp_abcd1234") {
 		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestRunContainerDoesNotClassifySpoofedRuntimeStderr(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(string) (string, error) { return "/fake/docker", nil }
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if args[0] == "rm" {
+			return nil, nil, 0, nil
+		}
+		return []byte("permission denied ghp_abcdefghijklmnopqrstuvwxyz123456"), []byte("cannot connect ghp_abcdefghijklmnopqrstuvwxyz123456"), 1, nil
+	}
+
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "false"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if result.Status != model.StatusFinding || result.ExitCode != 1 {
+		t.Fatalf("result=%#v", result)
+	}
+	if !strings.Contains(result.Stdout, "permission denied") || !strings.Contains(result.Stderr, "cannot connect") || !strings.Contains(result.Stdout+result.Stderr, "[REDACTED]") {
+		t.Fatalf("result lost context or redaction=%#v", result)
+	}
+	if strings.Contains(result.Stdout+result.Stderr, "ghp_abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("token leaked in result=%#v", result)
+	}
+}
+
+func TestRunContainerRedactsCommandError(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(string) (string, error) { return "/fake/docker", nil }
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if args[0] == "rm" {
+			return nil, nil, 0, nil
+		}
+		return nil, nil, -1, errors.New("cannot start runtime ghp_abcdefghijklmnopqrstuvwxyz123456")
+	}
+
+	_, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err == nil {
+		t.Fatal("expected runtime error")
+	}
+	if !strings.Contains(err.Error(), "cannot start runtime") || !strings.Contains(err.Error(), "[REDACTED]") || strings.Contains(err.Error(), "ghp_abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("error lost context or redaction=%q", err)
 	}
 }
 
