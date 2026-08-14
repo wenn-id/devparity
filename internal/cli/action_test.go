@@ -43,6 +43,43 @@ func TestActionHasSafeCompositeInputs(t *testing.T) {
 	}
 }
 
+func TestActionUsesPortableWorkspaceSafeDownloadSteps(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "action.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	for _, required := range []string{
+		"Linux-ARM64) asset=devparity-linux-arm64",
+		"runner.os != 'Windows'",
+		"runner.os == 'Windows'",
+		"shell: powershell",
+		"RUNNER_TEMP",
+		"GITHUB_WORKSPACE",
+		"mktemp -d",
+		"trap 'rm -rf",
+		"--output \"$workdir/$asset\"",
+		"--output \"$workdir/checksums.txt\"",
+		"Join-Path $env:RUNNER_TEMP",
+		"Invoke-WebRequest",
+		"Get-FileHash -Algorithm SHA256",
+		"try {",
+		"finally {",
+		"Remove-Item",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("action missing portable workspace-safe behavior %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"curl -fsSLO",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("action still relies on non-portable command %q", forbidden)
+		}
+	}
+}
+
 func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
 	if err != nil {
