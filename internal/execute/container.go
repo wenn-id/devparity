@@ -73,31 +73,22 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	commandContext, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 	start := time.Now()
+	redactor := NewRedactor(nil)
 	stdout, stderr, exit, runErr := commandFunc(commandContext, runtimeName, args)
 	if runErr != nil {
-		return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %w", runErr)
+		return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %s", redactor.Redact(runErr.Error()))
 	}
-	if runtimeFailure(stderr) {
-		return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %s", strings.TrimSpace(string(stderr)))
+	if exit == 125 {
+		return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %s", redactor.Redact(strings.TrimSpace(string(stderr))))
 	}
-	result = model.ExecutionResult{BlockID: block.ID, Mode: "container", ExitCode: exit, Duration: time.Since(start).Milliseconds(), Stdout: NewRedactor(nil).Redact(string(stdout)), Stderr: NewRedactor(nil).Redact(string(stderr)), Status: model.StatusPass}
+	result = model.ExecutionResult{BlockID: block.ID, Mode: "container", ExitCode: exit, Duration: time.Since(start).Milliseconds(), Stdout: redactor.Redact(string(stdout)), Stderr: redactor.Redact(string(stderr)), Status: model.StatusPass}
 	if exit != 0 || commandContext.Err() != nil {
 		result.Status = model.StatusFinding
 		if commandContext.Err() != nil {
-			result.Stderr = strings.TrimSpace(result.Stderr + "\n" + commandContext.Err().Error())
+			result.Stderr = strings.TrimSpace(result.Stderr + "\n" + redactor.Redact(commandContext.Err().Error()))
 		}
 	}
 	return result, nil
-}
-
-func runtimeFailure(stderr []byte) bool {
-	message := strings.ToLower(string(stderr))
-	for _, marker := range []string{"permission denied", "cannot connect", "failed to connect", "is the docker daemon running", "error during connect", "no matching manifest", "unable to find image"} {
-		if strings.Contains(message, marker) {
-			return true
-		}
-	}
-	return false
 }
 
 func containerShell(block model.DocBlock) (string, []string, error) {

@@ -58,21 +58,6 @@ func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	}
 }
 
-func TestRuntimeFailureRecognizesUnavailableContainerRuntime(t *testing.T) {
-	for _, stderr := range []string{
-		"failed to connect to the docker API",
-		"no matching manifest for windows/amd64",
-		"Unable to find image 'node:22' locally",
-	} {
-		if !runtimeFailure([]byte(stderr)) {
-			t.Fatalf("runtimeFailure(%q)=false", stderr)
-		}
-	}
-	if runtimeFailure([]byte("npm test failed")) {
-		t.Fatal("ordinary command failure classified as runtime failure")
-	}
-}
-
 func TestRunContainerDoesNotClassifySpoofedRuntimeStderr(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
