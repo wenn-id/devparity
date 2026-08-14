@@ -67,7 +67,7 @@ func CopyWorkspaceWithContext(ctx context.Context, root string, limits Workspace
 		return fail(err)
 	}
 
-	var fileCount, totalBytes int64
+	var entryCount, totalBytes int64
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -82,6 +82,10 @@ func CopyWorkspaceWithContext(ctx context.Context, root string, limits Workspace
 		if rel == "." {
 			return nil
 		}
+		if entryCount >= limits.MaxFiles {
+			return fmt.Errorf("workspace exceeds maximum file count %d", limits.MaxFiles)
+		}
+		entryCount++
 		if entry.IsDir() && excludedDirectory(rel) {
 			return filepath.SkipDir
 		}
@@ -97,9 +101,6 @@ func CopyWorkspaceWithContext(ctx context.Context, root string, limits Workspace
 		}
 		if !entry.Type().IsRegular() {
 			return fmt.Errorf("workspace contains unsupported file %q", filepath.ToSlash(rel))
-		}
-		if fileCount >= limits.MaxFiles {
-			return fmt.Errorf("workspace exceeds maximum file count %d", limits.MaxFiles)
 		}
 		info, err := entry.Info()
 		if err != nil {
@@ -125,7 +126,7 @@ func CopyWorkspaceWithContext(ctx context.Context, root string, limits Workspace
 			_ = input.Close()
 			return err
 		}
-		copied, copyErr := copyFile(ctx, output, input, limits.MaxFileBytes, limits.MaxTotalBytes-totalBytes)
+		copied, copyErr := copyFile(ctx, output, input, limits.MaxFileBytes, limits.MaxTotalBytes-totalBytes, limits.MaxTotalBytes)
 		if closeErr := input.Close(); copyErr == nil {
 			copyErr = closeErr
 		}
@@ -138,7 +139,6 @@ func CopyWorkspaceWithContext(ctx context.Context, root string, limits Workspace
 		if copyErr != nil {
 			return copyErr
 		}
-		fileCount++
 		totalBytes += copied
 		return nil
 	})
@@ -182,7 +182,7 @@ func excludedDirectory(rel string) bool {
 	return first == ".git" || first == "node_modules" || first == ".devparity"
 }
 
-func copyFile(ctx context.Context, output, input *os.File, maxFileBytes, maxTotalBytes int64) (int64, error) {
+func copyFile(ctx context.Context, output, input *os.File, maxFileBytes, remainingTotalBytes, maxTotalBytes int64) (int64, error) {
 	buffer := make([]byte, 32*1024)
 	var copied int64
 	for {
@@ -194,7 +194,7 @@ func copyFile(ctx context.Context, output, input *os.File, maxFileBytes, maxTota
 			if copied > maxFileBytes-int64(read) {
 				return copied, fmt.Errorf("workspace file exceeds maximum file size %d bytes", maxFileBytes)
 			}
-			if copied > maxTotalBytes-int64(read) {
+			if copied > remainingTotalBytes-int64(read) {
 				return copied, fmt.Errorf("workspace exceeds maximum size %d bytes", maxTotalBytes)
 			}
 			written, writeErr := output.Write(buffer[:read])

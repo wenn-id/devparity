@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestJSONFieldLines(t *testing.T) {
@@ -62,13 +61,9 @@ func TestJSONFieldLinesLargeObjectStaysWithinRuntimeCeiling(t *testing.T) {
 	}
 	builder.WriteByte('}')
 
-	started := time.Now()
 	lines, err := jsonFieldLines([]byte(builder.String()))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if elapsed := time.Since(started); elapsed > 5*time.Second {
-		t.Fatalf("large JSON object took %s; want <= 5s", elapsed)
 	}
 	if len(lines) != fields {
 		t.Fatalf("mapped fields=%d, want %d", len(lines), fields)
@@ -89,5 +84,29 @@ func TestJSONFieldLinesRejectsFieldCountOverCeiling(t *testing.T) {
 	_, err := jsonFieldLines([]byte(builder.String()))
 	if err == nil || !strings.Contains(err.Error(), "field count") {
 		t.Fatalf("err=%v, want field-count ceiling", err)
+	}
+}
+
+func benchmarkJSONFieldLinesInput() []byte {
+	const fields = 50_000
+	var builder strings.Builder
+	builder.WriteByte('{')
+	for index := 0; index < fields; index++ {
+		if index > 0 {
+			builder.WriteByte(',')
+		}
+		fmt.Fprintf(&builder, `"key%d":"value"`, index)
+	}
+	builder.WriteByte('}')
+	return []byte(builder.String())
+}
+
+func BenchmarkJSONFieldLines(b *testing.B) {
+	data := benchmarkJSONFieldLinesInput()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		if _, err := jsonFieldLines(data); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

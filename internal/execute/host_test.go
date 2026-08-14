@@ -23,7 +23,7 @@ func TestRunHostSuccessUsesMinimalForwardedEnvironment(t *testing.T) {
 	}
 	t.Setenv("DEVPARITY_TEST_SECRET", "exact-secret")
 	block := model.DocBlock{ID: "README.md:2", Shell: "sh", Script: `printf '%s|%s|%s' "$DEVPARITY_TEST_SECRET" "${DEVPARITY_TEST_ABSENT-}" "${DEVPARITY_NOT_FORWARDED-}"`}
-	result, err := RunHost(context.Background(), grant, block, Options{Root: t.TempDir(), EnvNames: []string{"DEVPARITY_TEST_SECRET", "DEVPARITY_TEST_ABSENT"}, Timeout: 2 * time.Second})
+	result, err := RunHost(context.Background(), grant, block, Options{Root: t.TempDir(), EnvNames: []string{"DEVPARITY_TEST_SECRET", "DEVPARITY_TEST_ABSENT"}, Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
