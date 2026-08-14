@@ -83,6 +83,35 @@ func TestTextEscapesControlCharactersAndLineBreaks(t *testing.T) {
 	}
 }
 
+func TestTextPreservesPrintableQuotesAndBackslashes(t *testing.T) {
+	report := model.Report{
+		SchemaVersion: 1,
+		ToolVersion:   `v1.0 "quoted"`,
+		Repository:    `C:\repo "quoted"`,
+		Summary:       model.Summary{Finding: 1},
+		Results: []model.Finding{{
+			RuleID:  "rule",
+			Status:  model.StatusFinding,
+			Message: `message "quoted" C:\path`,
+		}},
+	}
+
+	var out bytes.Buffer
+	if err := Text(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		`DevParity v1.0 "quoted"`,
+		`Repository: C:\repo "quoted"`,
+		`message "quoted" C:\path`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("text=%q, missing printable value %q", got, want)
+		}
+	}
+}
+
 func TestGitHubEscapesMarkdownDelimitersAndNewlines(t *testing.T) {
 	report := model.Report{
 		SchemaVersion: 1,
@@ -121,6 +150,52 @@ func TestGitHubEscapesMarkdownDelimitersAndNewlines(t *testing.T) {
 	rows := strings.Count(got, "\n|")
 	if rows != 3 {
 		t.Fatalf("markdown=%q, want 3 table lines (header, separator, one finding), got %d", got, rows)
+	}
+}
+
+func TestGitHubEscapesMarkdownLinksAndHTML(t *testing.T) {
+	report := model.Report{
+		SchemaVersion: 1,
+		ToolVersion:   "test",
+		Repository:    "repo",
+		Summary:       model.Summary{Finding: 1},
+		Results: []model.Finding{{
+			RuleID:   "node-version-conflict",
+			Status:   model.StatusFinding,
+			Message:  "[click](https://attacker.example) <script>alert(1)</script> *bold* _em_ ~del~",
+			Evidence: []model.Fact{},
+		}},
+	}
+
+	var out bytes.Buffer
+	if err := GitHub(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+
+	// Untrusted values must render as plain text, never as links, HTML, or
+	// emphasis. Each Markdown-significant delimiter is backslash-escaped.
+	for _, raw := range []string{
+		"[click](https://attacker.example)",
+		"<script>",
+		"*bold*",
+		"_em_",
+		"~del~",
+	} {
+		if strings.Contains(got, raw) {
+			t.Fatalf("markdown=%q, unescaped markdown construct %q leaked", got, raw)
+		}
+	}
+	for _, want := range []string{
+		`\[click\]\(https://attacker.example\)`,
+		`\<script\>alert\(1\)\</script\>`,
+		`\*bold\*`,
+		`\_em\_`,
+		`\~del\~`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("markdown=%q, missing escaped value %q", got, want)
+		}
 	}
 }
 
