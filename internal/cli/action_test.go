@@ -45,6 +45,54 @@ func TestActionHasSafeCompositeInputs(t *testing.T) {
 	}
 }
 
+func TestPublicBetaDocumentationCoversInstallActionSecurityAndGovernance(t *testing.T) {
+	read := func(path ...string) string {
+		data, err := os.ReadFile(filepath.Join(append([]string{"..", ".."}, path...)...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
+	}
+	readme := read("README.md")
+	security := read("SECURITY.md")
+
+	for _, required := range []string{
+		"## Installation",
+		"checksums.txt",
+		"sha256sum",
+		"shasum -a 256",
+		"Get-FileHash",
+		"## GitHub Action",
+		"uses: wenn-id/devparity@v0.1.0-beta.1",
+		"version:",
+		"strict:",
+		"Linux",
+		"macOS",
+		"Windows",
+		"## Repository governance",
+		"verify / test (ubuntu-latest)",
+		"verify / test (windows-latest)",
+		"verify / test (macos-14)",
+		"verify / container",
+		"main",
+	} {
+		if !strings.Contains(readme, required) {
+			t.Fatalf("README missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"# Security Policy",
+		"https://github.com/wenn-id/devparity/security/advisories/new",
+		"## Supported Versions",
+		"v0.1.x",
+		"Unsupported",
+	} {
+		if !strings.Contains(security, required) {
+			t.Fatalf("SECURITY.md missing %q", required)
+		}
+	}
+}
+
 func TestActionUsesPortableWorkspaceSafeDownloadSteps(t *testing.T) {
 	read := func(path ...string) string {
 		parts := append([]string{"..", ".."}, path...)
