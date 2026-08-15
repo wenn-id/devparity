@@ -176,14 +176,14 @@ func TestReleaseWorkflowUsesReadOnlyBuildJobsAndPinnedActions(t *testing.T) {
 	if strings.Contains(verifyText, "contents: write") || strings.Contains(ciText, "contents: write") {
 		t.Fatal("CI/verify workflow is not read-only")
 	}
-	if !strings.Contains(verifyText, "go mod tidy -diff") {
-		t.Fatal("verify workflow does not enforce go mod tidy -diff")
+	if !strings.Contains(verifyText, "if: runner.os == 'Linux'\n        run: go mod tidy -diff") {
+		t.Fatal("verify workflow does not enforce a Linux go mod tidy -diff gate")
 	}
-	if !strings.Contains(verifyText, "name: Install staticcheck\n        shell: bash") {
-		t.Fatal("staticcheck installation must use bash on every runner")
+	if !strings.Contains(verifyText, "name: Install staticcheck\n        if: runner.os == 'Linux'\n        shell: bash") {
+		t.Fatal("staticcheck installation must use the Linux quality gate")
 	}
-	if !strings.Contains(verifyText, "staticcheck ./...") {
-		t.Fatal("verify workflow does not enforce staticcheck")
+	if !strings.Contains(verifyText, "if: runner.os == 'Linux'\n        run: staticcheck ./...") {
+		t.Fatal("verify workflow does not enforce a Linux staticcheck gate")
 	}
 }
 
