@@ -17,23 +17,25 @@ import (
 type CommandFunc func(context.Context, string, []string, int64) ([]byte, []byte, int, error)
 
 var (
-	lookPath                = exec.LookPath
-	commandFunc CommandFunc = runCommand
+	lookPath                                 = exec.LookPath
+	commandFunc                  CommandFunc = runCommand
+	containerRuntimeProbeTimeout             = 10 * time.Second
 )
 
 func probeContainerRuntime(ctx context.Context) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	probeContext, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 	failures := make([]string, 0, 2)
 	for _, candidate := range []string{"docker", "podman"} {
 		if _, err := lookPath(candidate); err != nil {
 			failures = append(failures, candidate+": not installed")
 			continue
 		}
+		probeContext, cancel := context.WithTimeout(ctx, containerRuntimeProbeTimeout)
 		_, stderr, exit, err := commandFunc(probeContext, candidate, []string{"info"}, defaultMaxOutput)
+		probeErr := probeContext.Err()
+		cancel()
 		if err == nil && exit == 0 {
 			return candidate, nil
 		}
@@ -41,8 +43,8 @@ func probeContainerRuntime(ctx context.Context) (string, error) {
 		if err != nil {
 			message = err.Error()
 		}
-		if probeContext.Err() != nil {
-			message = probeContext.Err().Error()
+		if probeErr != nil {
+			message = probeErr.Error()
 		}
 		if message == "" {
 			message = fmt.Sprintf("exit code %d", exit)
@@ -55,15 +57,12 @@ func probeContainerRuntime(ctx context.Context) (string, error) {
 func NewContainerGrant() Grant { return Grant{container: true} }
 
 func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts Options) (result model.ExecutionResult, err error) {
-	runtimeName := ""
-	for _, candidate := range []string{"docker", "podman"} {
-		if _, lookErr := lookPath(candidate); lookErr == nil {
-			runtimeName = candidate
-			break
-		}
+	if !grant.container {
+		return model.ExecutionResult{}, errors.New("container execution requires a container grant")
 	}
-	if runtimeName == "" {
-		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: "docker or podman is not installed"}, nil
+	runtimeName, probeErr := probeContainerRuntime(ctx)
+	if probeErr != nil {
+		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: probeErr.Error()}, nil
 	}
 	return runContainerWithRuntime(ctx, grant, runtimeName, block, opts)
 }
