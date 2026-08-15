@@ -363,6 +363,7 @@ func TestReleaseWaitsForAllVerificationGates(t *testing.T) {
 		"go build -trimpath ./cmd/devparity",
 		"End-to-end release and composite-action smoke",
 		"DEVPARITY_CONTAINER_TEST: \"1\"",
+		"go test -v ./...",
 	} {
 		if !strings.Contains(verifyText, gate) {
 			t.Fatalf("verification workflow missing %q", gate)

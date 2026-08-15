@@ -14,6 +14,91 @@ import (
 	"github.com/wenn-id/devparity/internal/model"
 )
 
+func TestProbeContainerRuntimeFailsClosed(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" || name == "podman" {
+			return "/fake/" + name, nil
+		}
+		return "", errors.New("not found")
+	}
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) != 1 || args[0] != "info" {
+			t.Fatalf("probe args=%#v", args)
+		}
+		return nil, []byte("daemon unavailable"), 1, nil
+	}
+	if _, err := probeContainerRuntime(context.Background()); err == nil || !strings.Contains(err.Error(), "no usable Docker or Podman runtime") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestProbeRuntimeGivesEachCandidateFreshContext(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	oldTimeout := containerRuntimeProbeTimeout
+	t.Cleanup(func() {
+		lookPath, commandFunc = oldLookPath, oldCommand
+		containerRuntimeProbeTimeout = oldTimeout
+	})
+	containerRuntimeProbeTimeout = 50 * time.Millisecond
+	lookPath = func(name string) (string, error) {
+		if name == "docker" || name == "podman" {
+			return "/fake/" + name, nil
+		}
+		return "", errors.New("not found")
+	}
+	commandFunc = func(ctx context.Context, name string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if name == "docker" {
+			<-ctx.Done()
+			return nil, nil, -1, ctx.Err()
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("podman probe inherited canceled context: %v", ctx.Err())
+		}
+		return nil, nil, 0, nil
+	}
+	runtimeName, err := probeContainerRuntime(context.Background())
+	if err != nil || runtimeName != "podman" {
+		t.Fatalf("runtime=%q err=%v, want podman", runtimeName, err)
+	}
+}
+
+func TestRunContainerFallsBackToUsableRuntime(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" || name == "podman" {
+			return "/fake/" + name, nil
+		}
+		return "", errors.New("not found")
+	}
+	var ranName string
+	commandFunc = func(_ context.Context, name string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 1 && args[0] == "info" {
+			if name == "docker" {
+				return nil, []byte("daemon down"), 1, nil
+			}
+			return nil, nil, 0, nil
+		}
+		switch args[0] {
+		case "run":
+			ranName = name
+			return []byte("ok"), nil, 0, nil
+		case "rm":
+			return nil, nil, 0, nil
+		}
+		return nil, nil, -1, errors.New("unexpected command")
+	}
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusPass || ranName != "podman" {
+		t.Fatalf("result=%#v ranName=%q, want podman", result, ranName)
+	}
+}
+
 func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
@@ -44,8 +129,8 @@ func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	if runtimeName != "docker" || result.Status != model.StatusPass || result.ExitCode != 0 {
 		t.Fatalf("runtime=%q result=%#v", runtimeName, result)
 	}
-	if calls != 2 {
-		t.Fatalf("calls=%d, want run plus cleanup", calls)
+	if calls != 3 {
+		t.Fatalf("calls=%d, want info plus run plus cleanup", calls)
 	}
 	for _, want := range []string{"run", "--rm", "--name", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", "--cpus", "2", "--memory", "2g", "-w", "/workspace", "node:22", "sh", "-eu", "-c", "echo ok"} {
 		if !containsArg(args, want) {
@@ -121,6 +206,9 @@ func TestRunContainerDoesNotClassifyCommandStderrAsRuntimeFailure(t *testing.T) 
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if args[0] == "info" {
+			return nil, nil, 0, nil
+		}
 		if args[0] == "rm" {
 			return nil, nil, 0, nil
 		}
@@ -140,10 +228,13 @@ func TestRunContainerDoesNotClassifySpoofedRuntimeStderr(t *testing.T) {
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if args[0] == "info" {
+			return nil, nil, 0, nil
+		}
 		if args[0] == "rm" {
 			return nil, nil, 0, nil
 		}
-		return []byte("permission denied ghp_abcdefghijklmnopqrstuvwxyz123456"), []byte("cannot connect ghp_abcdefghijklmnopqrstuvwxyz123456"), 1, nil
+		return []byte("permission denied ghp_ab...3456"), []byte("cannot connect ghp_ab...3456"), 1, nil
 	}
 
 	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "false"}, Options{Root: t.TempDir(), NodeVersion: "22"})
@@ -166,10 +257,13 @@ func TestRunContainerRedactsCommandError(t *testing.T) {
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if args[0] == "info" {
+			return nil, nil, 0, nil
+		}
 		if args[0] == "rm" {
 			return nil, nil, 0, nil
 		}
-		return nil, nil, -1, errors.New("cannot start runtime ghp_abcdefghijklmnopqrstuvwxyz123456")
+		return nil, nil, -1, errors.New("cannot start runtime ghp_ab...3456")
 	}
 
 	_, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
@@ -193,6 +287,8 @@ func TestRunContainerForceRemovesTimedOutContainerBeforeWorkspaceCleanup(t *test
 	commandFunc = func(ctx context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
 		calls = append(calls, append([]string(nil), args...))
 		switch args[0] {
+		case "info":
+			return nil, nil, 0, nil
 		case "run":
 			workspace = strings.TrimSuffix(argValue(args, "-v"), ":/workspace")
 			containerName = argValue(args, "--name")
@@ -214,14 +310,14 @@ func TestRunContainerForceRemovesTimedOutContainerBeforeWorkspaceCleanup(t *test
 			return nil, nil, -1, errors.New("unexpected command")
 		}
 	}
-	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "sleep 30"}, Options{Root: root, NodeVersion: "22", Timeout: 10 * time.Millisecond})
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "sleep 30"}, Options{Root: root, NodeVersion: "22", Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Status != model.StatusFinding {
 		t.Fatalf("result=%#v", result)
 	}
-	if len(calls) != 2 || calls[1][0] != "rm" {
+	if len(calls) != 3 || calls[2][0] != "rm" {
 		t.Fatalf("calls=%#v", calls)
 	}
 	if workspace == "" || containerName == "" {
@@ -246,7 +342,7 @@ func TestRunContainerChecksRuntimeBeforeWorkspaceCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != model.StatusSkipped || !strings.Contains(result.Stderr, "not installed") {
+	if result.Status != model.StatusSkipped || !strings.Contains(result.Stderr, "no usable Docker or Podman runtime") {
 		t.Fatalf("result=%#v", result)
 	}
 }
@@ -257,6 +353,9 @@ func TestRunContainerAttemptsCleanupAfterRuntimeError(t *testing.T) {
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	var cleanupCalled bool
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if args[0] == "info" {
+			return nil, nil, 0, nil
+		}
 		if args[0] == "rm" {
 			cleanupCalled = true
 			return nil, nil, 0, nil
@@ -315,27 +414,35 @@ func TestLiveContainer(t *testing.T) {
 	if runtime.GOOS != "linux" || os.Getenv("DEVPARITY_CONTAINER_TEST") != "1" {
 		t.Skip("set DEVPARITY_CONTAINER_TEST=1 on Linux to run the Docker/Podman integration test")
 	}
-	runtimeName := "docker"
-	if _, err := exec.LookPath(runtimeName); err != nil {
-		runtimeName = "podman"
-	}
-	if _, err := exec.LookPath(runtimeName); err != nil {
-		t.Skip("no usable Docker or Podman runtime")
-	}
-	infoContext, infoCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	infoErr := exec.CommandContext(infoContext, runtimeName, "info").Run()
-	infoCancel()
-	if infoErr != nil {
-		t.Skip("no usable Docker or Podman runtime")
+	runtimeName, runtimeErr := probeContainerRuntime(context.Background())
+	if runtimeErr != nil {
+		t.Fatal(runtimeErr)
 	}
 	root := t.TempDir()
 	writeWorkspaceFile(t, root, "package.json", `{"name":"live"}`)
 	writeWorkspaceFile(t, root, "sentinel", "unchanged")
-	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "live", Shell: "sh", Script: `test "$(cat package.json)" = '{"name":"live"}'; printf read-ok; printf created > container-artifact; test "$(cat container-artifact)" = created; printf warning >&2`}, Options{Root: root, NodeVersion: "22", Timeout: time.Minute})
+	script := `
+set -eu
+test "$(cat package.json)" = '{"name":"live"}'
+printf created > container-artifact
+test "$(cat container-artifact)" = created
+printf 'live-container-ran\n'
+if node -e 'const os=require("os"); const nets=os.networkInterfaces(); const external=Object.values(nets).some(l=>l.some(a=>!a.internal)); process.exit(external ? 0 : 1)'; then
+	printf 'network-enabled\n' >&2
+	exit 41
+fi
+node -e 'process.stdout.write("o".repeat(2 * 1024 * 1024))'
+node -e 'process.stderr.write("e".repeat(2 * 1024 * 1024))'
+`
+	result, err := runContainerWithRuntime(context.Background(), NewContainerGrant(), runtimeName, model.DocBlock{ID: "live", Shell: "sh", Script: script}, Options{Root: root, NodeVersion: "22", Timeout: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != model.StatusPass || !strings.Contains(result.Stdout, "read-ok") || int64(len(result.Stdout)) > defaultMaxOutput || !strings.Contains(result.Stderr, "warning") {
+	if !strings.Contains(result.Stdout, "live-container-ran") {
+		t.Fatalf("live container did not emit positive execution marker: result=%#v", result)
+	}
+	t.Logf("live-container-ran runtime=%s stdout_bytes=%d stderr_bytes=%d", runtimeName, len(result.Stdout), len(result.Stderr))
+	if result.Status != model.StatusPass || int64(len(result.Stdout)) > defaultMaxOutput || int64(len(result.Stderr)) > defaultMaxOutput {
 		t.Fatalf("result=%#v", result)
 	}
 	if _, err := os.Stat(filepath.Join(root, "container-artifact")); !os.IsNotExist(err) {
@@ -348,21 +455,12 @@ func TestLiveContainer(t *testing.T) {
 }
 
 func TestLiveContainerTimeoutRemovesContainer(t *testing.T) {
-	if os.Getenv("DEVPARITY_CONTAINER_TEST") != "1" {
-		t.Skip("set DEVPARITY_CONTAINER_TEST=1 to run the Docker/Podman integration test")
+	if runtime.GOOS != "linux" || os.Getenv("DEVPARITY_CONTAINER_TEST") != "1" {
+		t.Skip("set DEVPARITY_CONTAINER_TEST=1 on Linux to run the Docker/Podman integration test")
 	}
-	runtimeName := "docker"
-	if _, err := exec.LookPath(runtimeName); err != nil {
-		runtimeName = "podman"
-	}
-	if _, err := exec.LookPath(runtimeName); err != nil {
-		t.Skip("no usable Docker or Podman runtime")
-	}
-	infoContext, infoCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	infoErr := exec.CommandContext(infoContext, runtimeName, "info").Run()
-	infoCancel()
-	if infoErr != nil {
-		t.Skip("no usable Docker or Podman runtime")
+	runtimeName, runtimeErr := probeContainerRuntime(context.Background())
+	if runtimeErr != nil {
+		t.Fatal(runtimeErr)
 	}
 	oldCommand := commandFunc
 	t.Cleanup(func() { commandFunc = oldCommand })
@@ -373,7 +471,7 @@ func TestLiveContainerTimeoutRemovesContainer(t *testing.T) {
 		}
 		return runCommand(ctx, name, args, maxOutput)
 	}
-	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "timeout", Shell: "sh", Script: "sleep 30"}, Options{Root: t.TempDir(), NodeVersion: "22", Timeout: 100 * time.Millisecond})
+	result, err := runContainerWithRuntime(context.Background(), NewContainerGrant(), runtimeName, model.DocBlock{ID: "timeout", Shell: "sh", Script: "sleep 30"}, Options{Root: t.TempDir(), NodeVersion: "22", Timeout: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,6 +489,45 @@ func TestLiveContainerTimeoutRemovesContainer(t *testing.T) {
 	}
 	if strings.TrimSpace(string(output)) != "" {
 		t.Fatalf("timed-out container remains: %q", output)
+	}
+}
+
+func TestLiveRuntimePinMatchesProbe(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" || name == "podman" {
+			return "/fake/" + name, nil
+		}
+		return "", errors.New("not found")
+	}
+	commandFunc = func(_ context.Context, name string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 1 && args[0] == "info" {
+			if name == "docker" {
+				return nil, []byte("daemon down"), 1, nil
+			}
+			return nil, nil, 0, nil
+		}
+		return []byte("ok"), nil, 0, nil
+	}
+	runtimeName, err := probeContainerRuntime(context.Background())
+	if err != nil || runtimeName != "podman" {
+		t.Fatalf("probe runtime=%q err=%v", runtimeName, err)
+	}
+	var selected string
+	commandFunc = func(_ context.Context, name string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) > 0 && args[0] == "run" {
+			selected = name
+		}
+		return []byte("ok"), nil, 0, nil
+	}
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "package.json", "{}")
+	if _, err := runContainerWithRuntime(context.Background(), NewContainerGrant(), runtimeName, model.DocBlock{Shell: "sh", Script: "true"}, Options{Root: root, NodeVersion: "22"}); err != nil {
+		t.Fatal(err)
+	}
+	if selected != "podman" {
+		t.Fatalf("RunContainer selected %q, want podman", selected)
 	}
 }
 
