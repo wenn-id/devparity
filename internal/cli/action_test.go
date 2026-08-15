@@ -80,6 +80,53 @@ func TestActionUsesPortableWorkspaceSafeDownloadSteps(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowUsesReadOnlyBuildJobsAndPinnedActions(t *testing.T) {
+	read := func(path ...string) string {
+		data, err := os.ReadFile(filepath.Join(path...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
+	}
+	ciText := read("..", "..", ".github", "workflows", "ci.yml")
+	verifyText := read("..", "..", ".github", "workflows", "verify.yml")
+	releaseText := read("..", "..", ".github", "workflows", "release.yml")
+
+	const (
+		checkout = "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"
+		setupGo  = "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+		upload   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+		download = "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131"
+	)
+	allText := ciText + verifyText + releaseText
+	for _, action := range []string{checkout, setupGo, upload, download} {
+		if !strings.Contains(allText, action) {
+			t.Fatalf("workflow files missing pinned action %q", action)
+		}
+	}
+	for _, mutable := range []string{"actions/checkout@v", "actions/setup-go@v", "actions/upload-artifact@v", "actions/download-artifact@v"} {
+		if strings.Contains(allText, mutable) {
+			t.Fatalf("workflow files still use mutable action reference %q", mutable)
+		}
+	}
+	if strings.Count(verifyText, "persist-credentials: false") != 2 ||
+		strings.Count(releaseText, "persist-credentials: false") != 1 {
+		t.Fatal("all non-publish checkouts must disable persisted credentials")
+	}
+	for _, workflow := range []string{ciText, verifyText, releaseText} {
+		if strings.Contains(workflow, "contents: write") && !strings.Contains(workflow, "  publish:") {
+			t.Fatal("non-publish workflow requests write permission")
+		}
+	}
+	if !strings.Contains(releaseText, "  publish:\n    needs: [verify, package]") ||
+		!strings.Contains(releaseText, "  publish:\n    needs: [verify, package]\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write") {
+		t.Fatal("publish job does not isolate contents: write")
+	}
+	if strings.Contains(verifyText, "contents: write") || strings.Contains(ciText, "contents: write") {
+		t.Fatal("CI/verify workflow is not read-only")
+	}
+}
+
 func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
 	if err != nil {
@@ -292,7 +339,7 @@ func TestReleaseWaitsForAllVerificationGates(t *testing.T) {
 	if !strings.Contains(packageJob, "ref: ${{ github.sha }}") {
 		t.Fatal("release package job does not check out the caller commit")
 	}
-	if !strings.Contains(packageJob, "actions/upload-artifact@v7") || !strings.Contains(packageJob, "name: release-assets") {
+	if !strings.Contains(packageJob, "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a") || !strings.Contains(packageJob, "name: release-assets") {
 		t.Fatal("package job does not upload the release-assets artifact")
 	}
 	if !strings.Contains(publishJob, "needs: [verify, package]") {
@@ -301,7 +348,7 @@ func TestReleaseWaitsForAllVerificationGates(t *testing.T) {
 	if !strings.Contains(publishJob, "permissions:\n      contents: write") {
 		t.Fatal("publish job lacks isolated write permission")
 	}
-	if !strings.Contains(publishJob, "actions/download-artifact@v7") || strings.Count(publishJob, "name: release-assets") != 1 {
+	if !strings.Contains(publishJob, "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131") || strings.Count(publishJob, "name: release-assets") != 1 {
 		t.Fatal("publish job does not download exactly the release-assets artifact")
 	}
 	for _, forbidden := range []string{"actions/checkout@", "actions/setup-go@", "gofmt", "go test", "go build"} {
