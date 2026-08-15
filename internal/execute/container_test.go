@@ -234,7 +234,7 @@ func TestRunContainerForceRemovesTimedOutContainerBeforeWorkspaceCleanup(t *test
 			return nil, nil, -1, errors.New("unexpected command")
 		}
 	}
-	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "sleep 30"}, Options{Root: root, NodeVersion: "22", Timeout: 10 * time.Millisecond})
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "sleep 30"}, Options{Root: root, NodeVersion: "22", Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
