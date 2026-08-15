@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -142,8 +143,8 @@ func concreteNodeVersion(root string) (string, error) {
 		return "", err
 	}
 	facts, findings := extract.VersionFiles(artifacts.Root, artifacts.VersionFiles)
-	if len(findings) > 0 {
-		return "", fmt.Errorf("Node version is inconclusive for container execution")
+	if hasRelevantNodeVersionFinding(findings) {
+		return "", fmt.Errorf("node version is inconclusive for container execution")
 	}
 	versionPattern := regexp.MustCompile(`^\d+(?:\.\d+){0,2}$`)
 	version := ""
@@ -152,7 +153,7 @@ func concreteNodeVersion(root string) (string, error) {
 			continue
 		}
 		if version != "" && version != fact.Value {
-			return "", fmt.Errorf("conflicting concrete Node versions for container execution")
+			return "", fmt.Errorf("conflicting concrete node versions for container execution")
 		}
 		version = fact.Value
 	}
@@ -162,9 +163,20 @@ func concreteNodeVersion(root string) (string, error) {
 	return version, nil
 }
 
-func staticDocsReport(root string) (model.Report, error) {
-	value, _, err := staticDocsData(root)
-	return value, err
+func hasRelevantNodeVersionFinding(findings []model.Finding) bool {
+	for _, finding := range findings {
+		for _, evidence := range finding.Evidence {
+			switch filepath.Base(evidence.Source.Path) {
+			case ".nvmrc", ".node-version":
+				return true
+			case ".tool-versions":
+				if !strings.Contains(finding.Message, "no nodejs entry found") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func staticDocsData(root string) (model.Report, []model.DocBlock, error) {

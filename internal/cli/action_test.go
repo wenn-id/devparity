@@ -176,6 +176,50 @@ func TestReleaseWorkflowUsesReadOnlyBuildJobsAndPinnedActions(t *testing.T) {
 	if strings.Contains(verifyText, "contents: write") || strings.Contains(ciText, "contents: write") {
 		t.Fatal("CI/verify workflow is not read-only")
 	}
+	if !strings.Contains(verifyText, "if: runner.os == 'Linux'\n        run: go mod tidy -diff") {
+		t.Fatal("verify workflow does not enforce a Linux go mod tidy -diff gate")
+	}
+	if !strings.Contains(verifyText, "name: Install staticcheck\n        if: runner.os == 'Linux'\n        shell: bash") {
+		t.Fatal("staticcheck installation must use the Linux quality gate")
+	}
+	testJobSteps := workflowJobSteps(t, verifyText, "test")
+	if !containsWorkflowRun(testJobSteps, "go mod tidy -diff", "runner.os == 'Linux'") {
+		t.Fatal("verify test job does not execute go mod tidy -diff")
+	}
+	if !containsWorkflowRun(testJobSteps, "staticcheck ./...", "runner.os == 'Linux'") {
+		t.Fatal("verify test job does not execute staticcheck")
+	}
+}
+
+type workflowStep struct {
+	Run string `yaml:"run"`
+	If  string `yaml:"if"`
+}
+
+func workflowJobSteps(t *testing.T, workflow, job string) []workflowStep {
+	t.Helper()
+	var parsed struct {
+		Jobs map[string]struct {
+			Steps []workflowStep `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(workflow), &parsed); err != nil {
+		t.Fatalf("parse workflow: %v", err)
+	}
+	jobData, ok := parsed.Jobs[job]
+	if !ok {
+		t.Fatalf("workflow missing job %q", job)
+	}
+	return jobData.Steps
+}
+
+func containsWorkflowRun(steps []workflowStep, command, condition string) bool {
+	for _, step := range steps {
+		if strings.TrimSpace(step.Run) == command && strings.TrimSpace(step.If) == condition {
+			return true
+		}
+	}
+	return false
 }
 
 func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
