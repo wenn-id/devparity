@@ -2,7 +2,9 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -44,39 +46,74 @@ func TestActionHasSafeCompositeInputs(t *testing.T) {
 }
 
 func TestActionUsesPortableWorkspaceSafeDownloadSteps(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "action.yml"))
-	if err != nil {
-		t.Fatal(err)
+	read := func(path ...string) string {
+		parts := append([]string{"..", ".."}, path...)
+		data, err := os.ReadFile(filepath.Join(parts...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
 	}
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	actionText := read("action.yml")
+	entrypointText := read("scripts", "action-entrypoint.sh")
+	if !strings.Contains(actionText, `bash "$GITHUB_ACTION_PATH/scripts/action-entrypoint.sh"`) {
+		t.Fatal("Unix composite step does not delegate to the tested action entrypoint")
+	}
 	for _, required := range []string{
-		"Linux-ARM64) asset=devparity-linux-arm64",
 		"runner.os != 'Windows'",
 		"runner.os == 'Windows'",
 		"shell: powershell",
+		"Invoke-WebRequest",
+		"Get-FileHash -Algorithm SHA256",
+		"Join-Path $env:RUNNER_TEMP",
+		"finally {",
+		"Remove-Item",
+	} {
+		if !strings.Contains(actionText, required) {
+			t.Fatalf("action missing Windows portable behavior %q", required)
+		}
+	}
+	for _, required := range []string{
+		"Linux-X64) asset=devparity-linux-amd64",
+		"Linux-ARM64) asset=devparity-linux-arm64",
+		"macOS-X64) asset=devparity-darwin-amd64",
+		"macOS-ARM64) asset=devparity-darwin-arm64",
 		"RUNNER_TEMP",
-		"GITHUB_WORKSPACE",
 		"mktemp -d",
 		"trap 'rm -rf",
 		"--output \"$workdir/$asset\"",
 		"--output \"$workdir/checksums.txt\"",
-		"Join-Path $env:RUNNER_TEMP",
-		"Invoke-WebRequest",
-		"Get-FileHash -Algorithm SHA256",
-		"try {",
-		"finally {",
-		"Remove-Item",
+		"grep \"  ${asset}$\" checksums.txt | sha256sum -c -",
+		"GITHUB_WORKSPACE",
+		"doctor --format github",
 	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("action missing portable workspace-safe behavior %q", required)
+		if !strings.Contains(entrypointText, required) {
+			t.Fatalf("action entrypoint missing portable workspace-safe behavior %q", required)
 		}
 	}
-	for _, forbidden := range []string{
-		"curl -fsSLO",
-	} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("action still relies on non-portable command %q", forbidden)
+	for _, forbidden := range []string{"curl -fsSLO", "actions/checkout", "contents: write"} {
+		if strings.Contains(actionText+entrypointText, forbidden) {
+			t.Fatalf("action still relies on forbidden behavior %q", forbidden)
 		}
+	}
+}
+
+func TestReleaseActionSmoke(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("release smoke uses Bash and GNU checksum tooling")
+	}
+	if os.Getenv("DEVPARITY_RELEASE_SMOKE") != "1" {
+		t.Skip("set DEVPARITY_RELEASE_SMOKE=1 to run release smoke")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", filepath.Join(root, "scripts", "release-smoke.sh"))
+	cmd.Dir = root
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("release smoke failed: %v\n%s", err, output)
 	}
 }
 
@@ -128,30 +165,36 @@ func TestReleaseWorkflowUsesReadOnlyBuildJobsAndPinnedActions(t *testing.T) {
 }
 
 func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
-	if err != nil {
-		t.Fatal(err)
+	read := func(path ...string) string {
+		data, err := os.ReadFile(filepath.Join(path...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
 	}
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	releaseText := read("..", "..", ".github", "workflows", "release.yml")
+	buildText := read("..", "..", "scripts", "release-build.sh")
+
+	if !strings.Contains(releaseText, `VERSION="$VERSION" DEST=dist bash scripts/release-build.sh`) {
+		t.Fatal("release workflow does not use the shared release builder")
+	}
+	text := buildText
 	const linkerTarget = "-X github.com/wenn-id/devparity/internal/cli.Version=${VERSION}"
 	if !strings.Contains(text, linkerTarget) {
-		t.Fatalf("release workflow missing linker target %q", linkerTarget)
+		t.Fatalf("release builder missing linker target %q", linkerTarget)
 	}
-	if strings.Contains(text, "-X github.com/devparity/devparity/internal/cli.Version=") {
-		t.Fatal("release workflow still uses the old module path for Version")
+	if strings.Contains(releaseText, "-X github.com/devparity/devparity/internal/cli.Version=") || strings.Contains(text, "-X github.com/devparity/devparity/internal/cli.Version=") {
+		t.Fatal("release builder still uses the old module path for Version")
 	}
-	const buildLoopHeader = "for target in \\\n"
-	buildLoopStart := strings.Index(text, buildLoopHeader)
-	if buildLoopStart == -1 {
-		t.Fatal("release workflow does not define the release asset build loop")
-	}
-	buildLoopEnd := strings.Index(text[buildLoopStart:], "\n          done")
-	if buildLoopEnd == -1 {
-		t.Fatal("release workflow release asset build loop is incomplete")
-	}
-	buildLoop := text[buildLoopStart : buildLoopStart+buildLoopEnd]
-	if !strings.Contains(text, "assets=(") {
-		t.Fatal("release workflow does not collect release assets for validation")
+	for _, required := range []string{
+		`for target in \`,
+		"grep -a -F -- \"$VERSION\" \"${DEST}/${asset}\" >/dev/null",
+		`test "$("${DEST}/devparity-linux-amd64" version)" = "$VERSION"`,
+		`(cd "$DEST" && sha256sum "${assets[@]}" > checksums.txt)`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("release builder missing %q", required)
+		}
 	}
 	for _, asset := range []string{
 		"devparity-linux-amd64",
@@ -160,21 +203,31 @@ func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
 		"devparity-darwin-arm64",
 		"devparity-windows-amd64.exe",
 	} {
-		if !strings.Contains(buildLoop, "asset="+asset) {
-			t.Fatalf("release workflow build loop does not generate asset %q", asset)
+		if !strings.Contains(text, "asset="+asset) {
+			t.Fatalf("release builder does not generate asset %q", asset)
 		}
 	}
-	if !strings.Contains(buildLoop, `assets+=("$asset")`) {
-		t.Fatal("release workflow does not append each built asset for validation")
+}
+
+func TestReleaseSmokeUsesAdvertisedDefaultVersion(t *testing.T) {
+	read := func(path ...string) string {
+		data, err := os.ReadFile(filepath.Join(path...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
 	}
-	if !strings.Contains(text, `for asset in "${assets[@]}"; do`) {
-		t.Fatal("release workflow does not verify every release asset")
+	actionText := read("..", "..", "action.yml")
+	smokeText := read("..", "..", "scripts", "release-smoke.sh")
+	const defaultVersion = "v0.1.0-beta.1"
+	if !strings.Contains(actionText, "default: "+defaultVersion) {
+		t.Fatalf("action does not advertise default version %q", defaultVersion)
 	}
-	if !strings.Contains(text, `grep -a -F -- "$VERSION" "dist/$asset" >/dev/null`) {
-		t.Fatal("release workflow does not verify each asset's embedded version")
+	if !strings.Contains(smokeText, `VERSION="${DEVPARITY_SMOKE_VERSION:-`+defaultVersion+`}"`) {
+		t.Fatalf("release smoke does not exercise advertised default version %q", defaultVersion)
 	}
-	if !strings.Contains(text, `test "$(./dist/devparity-linux-amd64 version)" = "$VERSION"`) {
-		t.Fatal("release workflow does not execute a release asset to verify its version")
+	if !strings.Contains(smokeText, "scripts/action-entrypoint.sh") {
+		t.Fatal("release smoke does not execute the composite action entrypoint")
 	}
 }
 
@@ -187,21 +240,23 @@ func TestReleaseChecksumsUseBasenames(t *testing.T) {
 		return strings.ReplaceAll(string(data), "\r\n", "\n")
 	}
 	releaseText := read("..", "..", ".github", "workflows", "release.yml")
-	actionText := read("..", "..", "action.yml")
+	buildText := read("..", "..", "scripts", "release-build.sh")
+	entrypointText := read("..", "..", "scripts", "action-entrypoint.sh")
+	smokeText := read("..", "..", "scripts", "release-smoke.sh")
 	verifyText := read("..", "..", ".github", "workflows", "verify.yml")
 
-	const manifestCommand = `(cd dist && sha256sum "${assets[@]}" > checksums.txt)`
-	if !strings.Contains(releaseText, manifestCommand) {
-		t.Fatalf("release workflow does not generate basename checksums with %q", manifestCommand)
+	const manifestCommand = `(cd "$DEST" && sha256sum "${assets[@]}" > checksums.txt)`
+	const verifyCommand = `grep "  ${asset}$" checksums.txt | sha256sum -c -`
+	if !strings.Contains(buildText, manifestCommand) {
+		t.Fatalf("release builder does not generate basename checksums with %q", manifestCommand)
 	}
-	if strings.Contains(releaseText, "sha256sum dist/* > dist/checksums.txt") {
+	if !strings.Contains(entrypointText, verifyCommand) {
+		t.Fatal("action entrypoint checksum verification no longer expects basename entries")
+	}
+	if strings.Contains(releaseText+buildText, "sha256sum dist/* > dist/checksums.txt") {
 		t.Fatal("release workflow still writes dist-prefixed checksum paths")
 	}
-	const verifyCommand = `grep "  ${asset}$" checksums.txt | sha256sum -c -`
-	if !strings.Contains(actionText, verifyCommand) {
-		t.Fatal("action checksum verification no longer expects basename entries")
-	}
-	const smokeStepName = "        name: Verify release checksum manifest"
+	const smokeStepName = "        name: End-to-end release and composite-action smoke"
 	stepStart := strings.Index(verifyText, smokeStepName)
 	if stepStart == -1 {
 		t.Fatal("CI is missing the release checksum smoke test")
@@ -218,11 +273,8 @@ func TestReleaseChecksumsUseBasenames(t *testing.T) {
 		runLines = append(runLines, line)
 	}
 	smokeRun := strings.Join(runLines, "\n")
-	if !strings.Contains(smokeRun, manifestCommand) {
-		t.Fatal("CI smoke test does not generate the release manifest command")
-	}
-	if !strings.Contains(smokeRun, verifyCommand) {
-		t.Fatal("CI smoke test does not use the action checksum verification command")
+	if !strings.Contains(smokeRun, "scripts/release-smoke.sh") {
+		t.Fatal("CI smoke test does not execute the end-to-end release smoke script")
 	}
 	for _, asset := range []string{
 		"devparity-linux-amd64",
@@ -231,8 +283,8 @@ func TestReleaseChecksumsUseBasenames(t *testing.T) {
 		"devparity-darwin-arm64",
 		"devparity-windows-amd64.exe",
 	} {
-		if !strings.Contains(smokeRun, asset) {
-			t.Fatalf("CI smoke test does not cover asset %q", asset)
+		if !strings.Contains(smokeText, asset) {
+			t.Fatalf("release smoke does not cover asset %q", asset)
 		}
 	}
 }
@@ -295,7 +347,7 @@ func TestReleaseWaitsForAllVerificationGates(t *testing.T) {
 		"go test ./...",
 		"go test -race ./...",
 		"go build -trimpath ./cmd/devparity",
-		"Verify release checksum manifest",
+		"End-to-end release and composite-action smoke",
 		"DEVPARITY_CONTAINER_TEST: \"1\"",
 	} {
 		if !strings.Contains(verifyText, gate) {
