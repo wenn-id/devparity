@@ -21,6 +21,37 @@ var (
 	commandFunc CommandFunc = runCommand
 )
 
+func probeContainerRuntime(ctx context.Context) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	probeContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	failures := make([]string, 0, 2)
+	for _, candidate := range []string{"docker", "podman"} {
+		if _, err := lookPath(candidate); err != nil {
+			failures = append(failures, candidate+": not installed")
+			continue
+		}
+		_, stderr, exit, err := commandFunc(probeContext, candidate, []string{"info"}, defaultMaxOutput)
+		if err == nil && exit == 0 {
+			return candidate, nil
+		}
+		message := strings.TrimSpace(string(stderr))
+		if err != nil {
+			message = err.Error()
+		}
+		if probeContext.Err() != nil {
+			message = probeContext.Err().Error()
+		}
+		if message == "" {
+			message = fmt.Sprintf("exit code %d", exit)
+		}
+		failures = append(failures, candidate+": "+message)
+	}
+	return "", fmt.Errorf("no usable Docker or Podman runtime: %s", strings.Join(failures, "; "))
+}
+
 func NewContainerGrant() Grant { return Grant{container: true} }
 
 func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts Options) (result model.ExecutionResult, err error) {

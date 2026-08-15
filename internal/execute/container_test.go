@@ -14,6 +14,26 @@ import (
 	"github.com/wenn-id/devparity/internal/model"
 )
 
+func TestProbeContainerRuntimeFailsClosed(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" || name == "podman" {
+			return "/fake/" + name, nil
+		}
+		return "", errors.New("not found")
+	}
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) != 1 || args[0] != "info" {
+			t.Fatalf("probe args=%#v", args)
+		}
+		return nil, []byte("daemon unavailable"), 1, nil
+	}
+	if _, err := probeContainerRuntime(context.Background()); err == nil || !strings.Contains(err.Error(), "no usable Docker or Podman runtime") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
@@ -315,27 +335,35 @@ func TestLiveContainer(t *testing.T) {
 	if runtime.GOOS != "linux" || os.Getenv("DEVPARITY_CONTAINER_TEST") != "1" {
 		t.Skip("set DEVPARITY_CONTAINER_TEST=1 on Linux to run the Docker/Podman integration test")
 	}
-	runtimeName := "docker"
-	if _, err := exec.LookPath(runtimeName); err != nil {
-		runtimeName = "podman"
-	}
-	if _, err := exec.LookPath(runtimeName); err != nil {
-		t.Skip("no usable Docker or Podman runtime")
-	}
-	infoContext, infoCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	infoErr := exec.CommandContext(infoContext, runtimeName, "info").Run()
-	infoCancel()
-	if infoErr != nil {
-		t.Skip("no usable Docker or Podman runtime")
+	runtimeName, runtimeErr := probeContainerRuntime(context.Background())
+	if runtimeErr != nil {
+		t.Fatal(runtimeErr)
 	}
 	root := t.TempDir()
 	writeWorkspaceFile(t, root, "package.json", `{"name":"live"}`)
 	writeWorkspaceFile(t, root, "sentinel", "unchanged")
-	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "live", Shell: "sh", Script: `test "$(cat package.json)" = '{"name":"live"}'; printf read-ok; printf created > container-artifact; test "$(cat container-artifact)" = created; printf warning >&2`}, Options{Root: root, NodeVersion: "22", Timeout: time.Minute})
+	script := `
+set -eu
+test "$(cat package.json)" = '{"name":"live"}'
+printf created > container-artifact
+test "$(cat container-artifact)" = created
+printf 'live-container-ran\n'
+if node -e 'const os=require("os"); const nets=os.networkInterfaces(); const external=Object.values(nets).some(l=>l.some(a=>!a.internal)); process.exit(external ? 0 : 1)'; then
+	printf 'network-enabled\n' >&2
+	exit 41
+fi
+node -e 'process.stdout.write("o".repeat(2 * 1024 * 1024))'
+node -e 'process.stderr.write("e".repeat(2 * 1024 * 1024))'
+`
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "live", Shell: "sh", Script: script}, Options{Root: root, NodeVersion: "22", Timeout: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != model.StatusPass || !strings.Contains(result.Stdout, "read-ok") || int64(len(result.Stdout)) > defaultMaxOutput || !strings.Contains(result.Stderr, "warning") {
+	if !strings.Contains(result.Stdout, "live-container-ran") {
+		t.Fatalf("live container did not emit positive execution marker: result=%#v", result)
+	}
+	t.Logf("live-container-ran runtime=%s stdout_bytes=%d stderr_bytes=%d", runtimeName, len(result.Stdout), len(result.Stderr))
+	if result.Status != model.StatusPass || int64(len(result.Stdout)) > defaultMaxOutput || int64(len(result.Stderr)) > defaultMaxOutput {
 		t.Fatalf("result=%#v", result)
 	}
 	if _, err := os.Stat(filepath.Join(root, "container-artifact")); !os.IsNotExist(err) {
@@ -348,21 +376,12 @@ func TestLiveContainer(t *testing.T) {
 }
 
 func TestLiveContainerTimeoutRemovesContainer(t *testing.T) {
-	if os.Getenv("DEVPARITY_CONTAINER_TEST") != "1" {
-		t.Skip("set DEVPARITY_CONTAINER_TEST=1 to run the Docker/Podman integration test")
+	if runtime.GOOS != "linux" || os.Getenv("DEVPARITY_CONTAINER_TEST") != "1" {
+		t.Skip("set DEVPARITY_CONTAINER_TEST=1 on Linux to run the Docker/Podman integration test")
 	}
-	runtimeName := "docker"
-	if _, err := exec.LookPath(runtimeName); err != nil {
-		runtimeName = "podman"
-	}
-	if _, err := exec.LookPath(runtimeName); err != nil {
-		t.Skip("no usable Docker or Podman runtime")
-	}
-	infoContext, infoCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	infoErr := exec.CommandContext(infoContext, runtimeName, "info").Run()
-	infoCancel()
-	if infoErr != nil {
-		t.Skip("no usable Docker or Podman runtime")
+	runtimeName, runtimeErr := probeContainerRuntime(context.Background())
+	if runtimeErr != nil {
+		t.Fatal(runtimeErr)
 	}
 	oldCommand := commandFunc
 	t.Cleanup(func() { commandFunc = oldCommand })
