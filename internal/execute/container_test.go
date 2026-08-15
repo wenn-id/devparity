@@ -132,7 +132,7 @@ func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	if calls != 3 {
 		t.Fatalf("calls=%d, want info plus run plus cleanup", calls)
 	}
-	for _, want := range []string{"run", "--rm", "--name", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", "--cpus", "2", "--memory", "2g", "-w", "/workspace", "node:22", "sh", "-eu", "-c", "echo ok"} {
+	for _, want := range []string{"run", "--rm", "--name", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", "--cpus", "2", "--memory", "2g", "--pids-limit", "256", "-w", "/workspace", "node:22", "sh", "-eu", "-c", "echo ok"} {
 		if !containsArg(args, want) {
 			t.Fatalf("args=%#v, missing %q", args, want)
 		}
@@ -140,12 +140,6 @@ func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	name := argValue(args, "--name")
 	if name == "" || !strings.HasPrefix(name, "devparity-") {
 		t.Fatalf("invalid retained container name %q in args=%#v", name, args)
-	}
-	if runtime.GOOS == "windows" && containsArg(args, "--pids-limit") {
-		t.Fatalf("Windows Docker does not support --pids-limit: args=%#v", args)
-	}
-	if runtime.GOOS != "windows" && (!containsArg(args, "--pids-limit") || !containsArg(args, "256")) {
-		t.Fatalf("POSIX runtime lost process limit: args=%#v", args)
 	}
 	for _, arg := range args {
 		if arg == root {
@@ -528,6 +522,66 @@ func TestLiveRuntimePinMatchesProbe(t *testing.T) {
 	}
 	if selected != "podman" {
 		t.Fatalf("RunContainer selected %q, want podman", selected)
+	}
+}
+
+func TestBuildContainerArgsAlwaysIncludesPidsLimit(t *testing.T) {
+	args := buildContainerArgs("devparity-test", "/tmp/workspace", "22", "sh", []string{"-eu", "-c", "true"}, &EnvironmentSnapshot{}, Options{})
+	if !containsArg(args, "--pids-limit") || !containsArg(args, "256") {
+		t.Fatalf("process limit missing from args=%#v", args)
+	}
+	if !containsArg(args, "--cpus") || !containsArg(args, "2") || !containsArg(args, "--memory") || !containsArg(args, "2g") {
+		t.Fatalf("resource limits missing from args=%#v", args)
+	}
+}
+
+func TestRunContainerPidsLimitUnsupportedDegradesWithWarning(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" {
+			return "/fake/docker", nil
+		}
+		return "", errors.New("not found")
+	}
+	var runCalls [][]string
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 0 {
+			return nil, nil, -1, errors.New("empty command")
+		}
+		switch args[0] {
+		case "info":
+			return nil, nil, 0, nil
+		case "rm":
+			return nil, nil, 0, nil
+		case "run":
+			runCalls = append(runCalls, append([]string(nil), args...))
+			if len(runCalls) == 1 {
+				return nil, []byte("docker: unknown flag: --pids-limit"), 125, nil
+			}
+			return []byte("ok"), nil, 0, nil
+		default:
+			return nil, nil, -1, errors.New("unexpected command")
+		}
+	}
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "README.md:2", Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusPass || result.ExitCode != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if len(runCalls) != 2 {
+		t.Fatalf("runCalls=%d, want 2 (attempt then degraded retry)", len(runCalls))
+	}
+	if !containsArg(runCalls[0], "--pids-limit") {
+		t.Fatalf("first run must attempt --pids-limit: %#v", runCalls[0])
+	}
+	if containsArg(runCalls[1], "--pids-limit") {
+		t.Fatalf("retry must omit --pids-limit: %#v", runCalls[1])
+	}
+	if !strings.Contains(result.Stderr, "process limit") || !strings.Contains(result.Stderr, "unsupported") {
+		t.Fatalf("degradation warning missing: result=%#v", result)
 	}
 }
 
