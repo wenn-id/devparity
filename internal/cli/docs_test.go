@@ -106,6 +106,20 @@ func TestDocsHostExecutionReturnsFailureExitCode(t *testing.T) {
 	}
 }
 
+func TestConcreteNodeVersionIgnoresUnrelatedVersionFinding(t *testing.T) {
+	root := t.TempDir()
+	writeCLIFile(t, root, ".nvmrc", "22\n")
+	writeCLIFile(t, root, ".tool-versions", "python 3.12\n")
+
+	version, err := concreteNodeVersion(root)
+	if err != nil {
+		t.Fatalf("concreteNodeVersion() error=%v", err)
+	}
+	if version != "22" {
+		t.Fatalf("concreteNodeVersion()=%q, want 22", version)
+	}
+}
+
 func TestDocsContainerModeCanSkipWhenRuntimeIsUnavailable(t *testing.T) {
 	clean := filepath.Join("..", "..", "testdata", "repos", "clean-node")
 	var stdout, stderr bytes.Buffer
