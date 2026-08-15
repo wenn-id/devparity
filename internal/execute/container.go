@@ -55,6 +55,20 @@ func probeContainerRuntime(ctx context.Context) (string, error) {
 func NewContainerGrant() Grant { return Grant{container: true} }
 
 func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts Options) (result model.ExecutionResult, err error) {
+	runtimeName := ""
+	for _, candidate := range []string{"docker", "podman"} {
+		if _, lookErr := lookPath(candidate); lookErr == nil {
+			runtimeName = candidate
+			break
+		}
+	}
+	if runtimeName == "" {
+		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: "docker or podman is not installed"}, nil
+	}
+	return runContainerWithRuntime(ctx, grant, runtimeName, block, opts)
+}
+
+func runContainerWithRuntime(ctx context.Context, grant Grant, runtimeName string, block model.DocBlock, opts Options) (result model.ExecutionResult, err error) {
 	if !grant.container {
 		return model.ExecutionResult{}, errors.New("container execution requires a container grant")
 	}
@@ -83,15 +97,8 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	commandContext, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
-	runtimeName := ""
-	for _, candidate := range []string{"docker", "podman"} {
-		if _, lookErr := lookPath(candidate); lookErr == nil {
-			runtimeName = candidate
-			break
-		}
-	}
 	if runtimeName == "" {
-		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: "docker or podman is not installed"}, nil
+		return model.ExecutionResult{}, errors.New("container execution requires a selected runtime")
 	}
 	if err := checkWorkspaceContext(commandContext); err != nil {
 		return model.ExecutionResult{}, err

@@ -355,7 +355,7 @@ fi
 node -e 'process.stdout.write("o".repeat(2 * 1024 * 1024))'
 node -e 'process.stderr.write("e".repeat(2 * 1024 * 1024))'
 `
-	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "live", Shell: "sh", Script: script}, Options{Root: root, NodeVersion: "22", Timeout: time.Minute})
+	result, err := runContainerWithRuntime(context.Background(), NewContainerGrant(), runtimeName, model.DocBlock{ID: "live", Shell: "sh", Script: script}, Options{Root: root, NodeVersion: "22", Timeout: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestLiveContainerTimeoutRemovesContainer(t *testing.T) {
 		}
 		return runCommand(ctx, name, args, maxOutput)
 	}
-	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "timeout", Shell: "sh", Script: "sleep 30"}, Options{Root: t.TempDir(), NodeVersion: "22", Timeout: 100 * time.Millisecond})
+	result, err := runContainerWithRuntime(context.Background(), NewContainerGrant(), runtimeName, model.DocBlock{ID: "timeout", Shell: "sh", Script: "sleep 30"}, Options{Root: t.TempDir(), NodeVersion: "22", Timeout: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,6 +410,45 @@ func TestLiveContainerTimeoutRemovesContainer(t *testing.T) {
 	}
 	if strings.TrimSpace(string(output)) != "" {
 		t.Fatalf("timed-out container remains: %q", output)
+	}
+}
+
+func TestLiveRuntimePinMatchesProbe(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" || name == "podman" {
+			return "/fake/" + name, nil
+		}
+		return "", errors.New("not found")
+	}
+	commandFunc = func(_ context.Context, name string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 1 && args[0] == "info" {
+			if name == "docker" {
+				return nil, []byte("daemon down"), 1, nil
+			}
+			return nil, nil, 0, nil
+		}
+		return []byte("ok"), nil, 0, nil
+	}
+	runtimeName, err := probeContainerRuntime(context.Background())
+	if err != nil || runtimeName != "podman" {
+		t.Fatalf("probe runtime=%q err=%v", runtimeName, err)
+	}
+	var selected string
+	commandFunc = func(_ context.Context, name string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) > 0 && args[0] == "run" {
+			selected = name
+		}
+		return []byte("ok"), nil, 0, nil
+	}
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "package.json", "{}")
+	if _, err := runContainerWithRuntime(context.Background(), NewContainerGrant(), runtimeName, model.DocBlock{Shell: "sh", Script: "true"}, Options{Root: root, NodeVersion: "22"}); err != nil {
+		t.Fatal(err)
+	}
+	if selected != "podman" {
+		t.Fatalf("RunContainer selected %q, want podman", selected)
 	}
 }
 
