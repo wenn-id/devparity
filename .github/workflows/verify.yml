@@ -26,6 +26,13 @@ jobs:
           go-version: 1.26.5
       - run: gofmt -w .
       - run: git diff --exit-code
+      - run: go mod tidy -diff
+      - name: Install staticcheck
+        shell: bash
+        run: |
+          GOBIN="$RUNNER_TEMP/devparity-bin" go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+          echo "$RUNNER_TEMP/devparity-bin" >> "$GITHUB_PATH"
+      - run: staticcheck ./...
       - run: go vet ./...
       - run: go test ./...
       - if: runner.os == 'Linux'

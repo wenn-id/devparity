@@ -143,7 +143,7 @@ func concreteNodeVersion(root string) (string, error) {
 	}
 	facts, findings := extract.VersionFiles(artifacts.Root, artifacts.VersionFiles)
 	if len(findings) > 0 {
-		return "", fmt.Errorf("Node version is inconclusive for container execution")
+		return "", fmt.Errorf("node version is inconclusive for container execution")
 	}
 	versionPattern := regexp.MustCompile(`^\d+(?:\.\d+){0,2}$`)
 	version := ""
@@ -152,7 +152,7 @@ func concreteNodeVersion(root string) (string, error) {
 			continue
 		}
 		if version != "" && version != fact.Value {
-			return "", fmt.Errorf("conflicting concrete Node versions for container execution")
+			return "", fmt.Errorf("conflicting concrete node versions for container execution")
 		}
 		version = fact.Value
 	}
@@ -160,11 +160,6 @@ func concreteNodeVersion(root string) (string, error) {
 		return "", fmt.Errorf("container execution requires --node-version or one concrete .nvmrc/.node-version")
 	}
 	return version, nil
-}
-
-func staticDocsReport(root string) (model.Report, error) {
-	value, _, err := staticDocsData(root)
-	return value, err
 }
 
 func staticDocsData(root string) (model.Report, []model.DocBlock, error) {
