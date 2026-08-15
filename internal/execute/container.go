@@ -146,23 +146,11 @@ func runContainerWithRuntime(ctx context.Context, grant Grant, runtimeName strin
 	if runErr != nil {
 		return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %s", redactor.Redact(runErr.Error()))
 	}
-	degraded := ""
-	if exit == 125 && pidsLimitUnsupported(stderr) {
-		// The runtime rejected the process limit before running the container.
-		// Retry once without it and record an explicit operational warning so the
-		// security contract is never dropped silently.
-		retryArgs := withoutPidsLimit(args)
-		stdout, stderr, exit, runErr = commandFunc(commandContext, runtimeName, retryArgs, opts.MaxOutput)
-		if runErr != nil {
-			return model.ExecutionResult{}, fmt.Errorf("container runtime failed: %s", redactor.Redact(runErr.Error()))
-		}
-		degraded = fmt.Sprintf("process limit --pids-limit 256 unsupported by %s; executed without it", runtimeName)
-	}
 	// The container process exit code is authoritative. Repository commands control
 	// stderr, so its text must never reclassify a successful runtime invocation.
 	result = model.ExecutionResult{BlockID: block.ID, Mode: "container", ExitCode: exit, Duration: time.Since(start).Milliseconds(), Stdout: redactor.Redact(string(stdout)), Stderr: redactor.Redact(string(stderr)), Status: model.StatusPass}
-	if degraded != "" {
-		result.Stderr = strings.TrimSpace(result.Stderr + "\n" + redactor.Redact(degraded))
+	if exit == 125 {
+		result.Stderr = strings.TrimSpace(result.Stderr + "\n" + redactor.Redact("process limit --pids-limit 256 may be unsupported or runtime failed before container start; no retry attempted"))
 	}
 	if exit != 0 || commandContext.Err() != nil {
 		result.Status = model.StatusFinding
@@ -236,40 +224,6 @@ func buildContainerArgs(containerName, workspace, version, shell string, shellAr
 	args = append(args, shell)
 	args = append(args, shellArgs...)
 	return args
-}
-
-// pidsLimitUnsupported reports whether a container runtime rejected the
-// process limit. It requires a runtime-style rejection (unknown/unsupported
-// flag wording) alongside a pids-limit reference so that repository-controlled
-// stderr that merely mentions the flag is not misclassified as a runtime error.
-func pidsLimitUnsupported(stderr []byte) bool {
-	message := strings.ToLower(string(stderr))
-	if !strings.Contains(message, "pids") {
-		return false
-	}
-	for _, marker := range []string{
-		"unknown flag", "unknown option", "unsupported", "not supported",
-		"invalid flag", "unrecognized", "no such flag", "flag provided but not defined",
-	} {
-		if strings.Contains(message, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-// withoutPidsLimit returns a copy of args with the "--pids-limit" flag and its
-// value removed, for a runtime that does not support the process limit.
-func withoutPidsLimit(args []string) []string {
-	out := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--pids-limit" {
-			i++
-			continue
-		}
-		out = append(out, args[i])
-	}
-	return out
 }
 
 func runCommand(ctx context.Context, name string, args []string, maxOutput int64) ([]byte, []byte, int, error) {

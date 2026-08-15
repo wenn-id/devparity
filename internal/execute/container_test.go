@@ -535,7 +535,7 @@ func TestBuildContainerArgsAlwaysIncludesPidsLimit(t *testing.T) {
 	}
 }
 
-func TestRunContainerPidsLimitUnsupportedDegradesWithWarning(t *testing.T) {
+func TestRunContainerPidsLimitUnsupportedReportsWarning(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
 	lookPath = func(name string) (string, error) {
@@ -556,10 +556,7 @@ func TestRunContainerPidsLimitUnsupportedDegradesWithWarning(t *testing.T) {
 			return nil, nil, 0, nil
 		case "run":
 			runCalls = append(runCalls, append([]string(nil), args...))
-			if len(runCalls) == 1 {
-				return nil, []byte("docker: unknown flag: --pids-limit"), 125, nil
-			}
-			return []byte("ok"), nil, 0, nil
+			return nil, []byte("docker: unknown flag: --pids-limit"), 125, nil
 		default:
 			return nil, nil, -1, errors.New("unexpected command")
 		}
@@ -568,20 +565,53 @@ func TestRunContainerPidsLimitUnsupportedDegradesWithWarning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != model.StatusPass || result.ExitCode != 0 {
+	if result.Status != model.StatusFinding || result.ExitCode != 125 {
 		t.Fatalf("result=%#v", result)
 	}
-	if len(runCalls) != 2 {
-		t.Fatalf("runCalls=%d, want 2 (attempt then degraded retry)", len(runCalls))
+	if len(runCalls) != 1 {
+		t.Fatalf("runCalls=%d, want 1 (no unsafe retry)", len(runCalls))
 	}
 	if !containsArg(runCalls[0], "--pids-limit") {
-		t.Fatalf("first run must attempt --pids-limit: %#v", runCalls[0])
-	}
-	if containsArg(runCalls[1], "--pids-limit") {
-		t.Fatalf("retry must omit --pids-limit: %#v", runCalls[1])
+		t.Fatalf("initial run must attempt --pids-limit: %#v", runCalls[0])
 	}
 	if !strings.Contains(result.Stderr, "process limit") || !strings.Contains(result.Stderr, "unsupported") {
 		t.Fatalf("degradation warning missing: result=%#v", result)
+	}
+}
+
+func TestRunContainerDoesNotRetryRepositoryExit125(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" {
+			return "/fake/docker", nil
+		}
+		return "", errors.New("not found")
+	}
+	var runCalls int
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 0 {
+			return nil, nil, -1, errors.New("empty command")
+		}
+		switch args[0] {
+		case "info", "rm":
+			return nil, nil, 0, nil
+		case "run":
+			runCalls++
+			return []byte("script output"), []byte("unsupported pids message from repository script"), 125, nil
+		default:
+			return nil, nil, -1, errors.New("unexpected command")
+		}
+	}
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "README.md:2", Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusFinding || result.ExitCode != 125 {
+		t.Fatalf("result=%#v", result)
+	}
+	if runCalls != 1 {
+		t.Fatalf("runCalls=%d, want 1 (repository command must not be retried)", runCalls)
 	}
 }
 
