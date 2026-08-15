@@ -29,7 +29,12 @@ trap 'rm -rf "$workdir"' EXIT
 curl --fail --location --silent --show-error --output "$workdir/$asset" "${base}/${asset}"
 curl --fail --location --silent --show-error --output "$workdir/checksums.txt" "${base}/checksums.txt"
 cd "$workdir"
-grep "  ${asset}$" checksums.txt | sha256sum -c -
+if [[ "${RUNNER_OS}" == "macOS" ]]; then
+  # macOS ships shasum, not GNU sha256sum.
+  grep "  ${asset}$" checksums.txt | shasum -a 256 -c -
+else
+  grep "  ${asset}$" checksums.txt | sha256sum -c -
+fi
 chmod +x "$asset"
 args=(doctor --format github)
 if [[ "${DEVPARITY_STRICT}" == "true" ]]; then args+=(--strict); fi

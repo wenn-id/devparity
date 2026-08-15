@@ -98,6 +98,20 @@ func TestActionUsesPortableWorkspaceSafeDownloadSteps(t *testing.T) {
 	}
 }
 
+func TestActionChecksumWorksOnMacOS(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "action-entrypoint.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	if !strings.Contains(text, "shasum -a 256") {
+		t.Fatal("action entrypoint has no macOS-compatible checksum fallback")
+	}
+	if !strings.Contains(text, "sha256sum") {
+		t.Fatal("action entrypoint lost the Linux sha256sum path")
+	}
+}
+
 func TestReleaseActionSmoke(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("release smoke uses Bash and GNU checksum tooling")
