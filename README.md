@@ -11,6 +11,47 @@ devparity doctor . --format json
 devparity docs verify .
 ```
 
+## Installation
+
+DevParity is distributed as a single binary for Linux, macOS, and Windows. A tagged beta release publishes these assets:
+
+- `devparity-linux-amd64` and `devparity-linux-arm64`
+- `devparity-darwin-amd64` and `devparity-darwin-arm64`
+- `devparity-windows-amd64.exe`
+- `checksums.txt`
+
+Download the binary for your runner from the matching [GitHub release](https://github.com/wenn-id/devparity/releases), download `checksums.txt` into the same directory, and verify it before running the program. On Linux:
+
+```sh
+grep '  devparity-linux-amd64$' checksums.txt | sha256sum -c -
+chmod +x devparity-linux-amd64
+./devparity-linux-amd64 doctor .
+```
+
+On macOS, use the matching Darwin asset and verify it with:
+
+```sh
+grep '  devparity-darwin-arm64$' checksums.txt | shasum -a 256 -c -
+chmod +x devparity-darwin-arm64
+./devparity-darwin-arm64 doctor .
+```
+
+On Windows PowerShell, compare the downloaded executable with its entry in `checksums.txt`:
+
+```powershell
+$expected = (Get-Content .\checksums.txt | Where-Object { $_ -match '  devparity-windows-amd64\.exe$' } | Select-Object -First 1) -split '\s+', 2 | Select-Object -First 1
+$actual = (Get-FileHash .\devparity-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
+if ($actual -ne $expected) { throw 'checksum mismatch' }
+.\devparity-windows-amd64.exe doctor .
+```
+
+The release workflow and composite action use the same basename checksum manifest. If no tagged release is available yet, build from source with Go 1.26.5:
+
+```sh
+go build -trimpath -o devparity ./cmd/devparity
+./devparity doctor .
+```
+
 Static commands read only the supported root artifacts: `package.json`, root lock/version files, the root `Dockerfile`, root `README.md`/`CONTRIBUTING.md`, and `.github/workflows/*.yml`/`*.yaml`. They do not start processes, access the network, or write to the target repository.
 
 ## What it checks
@@ -59,9 +100,40 @@ Docker is preferred and Podman is the fallback. PowerShell container fences are 
 
 JSON output uses `schema_version: 1`. Findings sort by source path, line, and rule ID. `doctor --format github` appends Markdown to `GITHUB_STEP_SUMMARY` and requires that environment variable.
 
+## GitHub Action
+
+Use the composite action to run `doctor` and publish its GitHub job summary. The action supports Linux, macOS, and Windows hosted runners and downloads the pinned release asset for the runner architecture, verifies `checksums.txt`, and removes its temporary download directory when it finishes:
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: wenn-id/devparity@v0.1.0-beta.1
+    with:
+      version: v0.1.0-beta.1
+      strict: "true"
+```
+
+Inputs:
+
+- `version` — required release tag; defaults to `v0.1.0-beta.1`.
+- `strict` — required string boolean; defaults to `false`. Set it to `true` to fail when drift is found.
+
+The action currently maps Linux x64/ARM64, macOS x64/ARM64, and Windows x64. Unsupported runner architectures fail explicitly rather than selecting an unverified asset.
+
 ## Security and disclosure
 
-Do not use host execution on an untrusted repository. Prefer the default static mode or the no-network container mode. If you find a security issue, avoid publishing secrets or an exploit and report the smallest reproducible details to the project maintainers through the repository's private security channel once one is configured.
+Repository contents are untrusted by default. Prefer static mode or the no-network container mode for repositories you have not reviewed. Host execution is intentionally unsandboxed and requires both `--execute` and `--trust-repository` on every invocation; trust is never persisted. See [SECURITY.md](SECURITY.md) for the private reporting path and supported versions.
+
+## Repository governance
+
+The default `main` branch is protected. Pull requests must pass these required checks on the current head before merging:
+
+- `verify / test (ubuntu-latest)`
+- `verify / test (windows-latest)`
+- `verify / test (macos-14)`
+- `verify / container`
+
+Protection also enforces strict status checks, administrator enforcement, stale-review dismissal, and conversation resolution. Changes are delivered through pull requests; direct force-pushes and branch deletion are disabled.
 
 ## Beta status
 
