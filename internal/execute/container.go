@@ -98,6 +98,13 @@ func runContainerWithRuntime(ctx context.Context, grant Grant, runtimeName strin
 	if runtimeName == "" {
 		return model.ExecutionResult{}, errors.New("container execution requires a selected runtime")
 	}
+	pidsSupported, pidsErr := probePidsLimitSupport(commandContext, runtimeName, opts.MaxOutput)
+	if pidsErr != nil {
+		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusFinding, Stderr: redactor.Redact(pidsErr.Error())}, nil
+	}
+	if !pidsSupported {
+		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusFinding, Stderr: redactor.Redact("process limit --pids-limit 256 is unsupported by the container runtime; user script was not executed")}, nil
+	}
 	if err := checkWorkspaceContext(commandContext); err != nil {
 		return model.ExecutionResult{}, err
 	}
@@ -208,9 +215,8 @@ func containerShell(block model.DocBlock) (string, []string, error) {
 }
 
 // buildContainerArgs constructs the Docker/Podman run arguments. The container
-// image is always Linux, so the process limit is attempted on every host
-// (including a Windows host running Linux containers) and only degraded if the
-// runtime rejects the flag.
+// image is always Linux, so the process limit is attempted on every host,
+// including a Windows host running Linux containers.
 func buildContainerArgs(containerName, workspace, version, shell string, shellArgs []string, environment *EnvironmentSnapshot, opts Options) []string {
 	args := []string{"run", "--rm", "--name", containerName, "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"}
 	if !opts.AllowNetwork {
@@ -224,6 +230,24 @@ func buildContainerArgs(containerName, workspace, version, shell string, shellAr
 	args = append(args, shell)
 	args = append(args, shellArgs...)
 	return args
+}
+
+func probePidsLimitSupport(ctx context.Context, runtimeName string, maxOutput int64) (bool, error) {
+	stdout, stderr, exit, err := commandFunc(ctx, runtimeName, []string{"run", "--help"}, maxOutput)
+	if err != nil {
+		return false, fmt.Errorf("container process-limit capability probe failed: %s", err)
+	}
+	if ctx.Err() != nil {
+		return false, fmt.Errorf("container process-limit capability probe failed: %s", ctx.Err())
+	}
+	if exit != 0 {
+		message := strings.TrimSpace(string(stderr))
+		if message == "" {
+			message = fmt.Sprintf("exit code %d", exit)
+		}
+		return false, fmt.Errorf("container process-limit capability probe failed: %s", message)
+	}
+	return strings.Contains(string(stdout)+"\n"+string(stderr), "--pids-limit"), nil
 }
 
 func runCommand(ctx context.Context, name string, args []string, maxOutput int64) ([]byte, []byte, int, error) {

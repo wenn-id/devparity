@@ -81,6 +81,9 @@ func TestRunContainerFallsBackToUsableRuntime(t *testing.T) {
 			}
 			return nil, nil, 0, nil
 		}
+		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
+			return []byte("Usage: podman run --pids-limit"), nil, 0, nil
+		}
 		switch args[0] {
 		case "run":
 			ranName = name
@@ -113,6 +116,9 @@ func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	var calls int
 	commandFunc = func(_ context.Context, name string, got []string, _ int64) ([]byte, []byte, int, error) {
 		calls++
+		if len(got) == 2 && got[0] == "run" && got[1] == "--help" {
+			return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+		}
 		if len(got) > 0 && got[0] == "run" {
 			runtimeName = name
 			args = append([]string(nil), got...)
@@ -129,8 +135,8 @@ func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	if runtimeName != "docker" || result.Status != model.StatusPass || result.ExitCode != 0 {
 		t.Fatalf("runtime=%q result=%#v", runtimeName, result)
 	}
-	if calls != 3 {
-		t.Fatalf("calls=%d, want info plus run plus cleanup", calls)
+	if calls != 4 {
+		t.Fatalf("calls=%d, want info plus help plus run plus cleanup", calls)
 	}
 	for _, want := range []string{"run", "--rm", "--name", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", "--cpus", "2", "--memory", "2g", "--pids-limit", "256", "-w", "/workspace", "node:22", "sh", "-eu", "-c", "echo ok"} {
 		if !containsArg(args, want) {
@@ -200,6 +206,9 @@ func TestRunContainerDoesNotClassifyCommandStderrAsRuntimeFailure(t *testing.T) 
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
+			return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+		}
 		if args[0] == "info" {
 			return nil, nil, 0, nil
 		}
@@ -222,6 +231,9 @@ func TestRunContainerDoesNotClassifySpoofedRuntimeStderr(t *testing.T) {
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
+			return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+		}
 		if args[0] == "info" {
 			return nil, nil, 0, nil
 		}
@@ -251,6 +263,9 @@ func TestRunContainerRedactsCommandError(t *testing.T) {
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
+			return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+		}
 		if args[0] == "info" {
 			return nil, nil, 0, nil
 		}
@@ -284,6 +299,9 @@ func TestRunContainerForceRemovesTimedOutContainerBeforeWorkspaceCleanup(t *test
 		case "info":
 			return nil, nil, 0, nil
 		case "run":
+			if len(args) == 2 && args[1] == "--help" {
+				return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+			}
 			workspace = strings.TrimSuffix(argValue(args, "-v"), ":/workspace")
 			containerName = argValue(args, "--name")
 			<-ctx.Done()
@@ -311,7 +329,7 @@ func TestRunContainerForceRemovesTimedOutContainerBeforeWorkspaceCleanup(t *test
 	if result.Status != model.StatusFinding {
 		t.Fatalf("result=%#v", result)
 	}
-	if len(calls) != 3 || calls[2][0] != "rm" {
+	if len(calls) != 4 || calls[3][0] != "rm" {
 		t.Fatalf("calls=%#v", calls)
 	}
 	if workspace == "" || containerName == "" {
@@ -347,6 +365,9 @@ func TestRunContainerAttemptsCleanupAfterRuntimeError(t *testing.T) {
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	var cleanupCalled bool
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
+			return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+		}
 		if args[0] == "info" {
 			return nil, nil, 0, nil
 		}
@@ -388,6 +409,9 @@ func TestRunContainerAllowNetworkRemovesOnlyNetworkRestriction(t *testing.T) {
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	var args []string
 	commandFunc = func(_ context.Context, _ string, got []string, _ int64) ([]byte, []byte, int, error) {
+		if len(got) == 2 && got[0] == "run" && got[1] == "--help" {
+			return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+		}
 		if len(got) > 0 && got[0] == "run" {
 			args = append([]string(nil), got...)
 		}
@@ -502,6 +526,9 @@ func TestLiveRuntimePinMatchesProbe(t *testing.T) {
 			}
 			return nil, nil, 0, nil
 		}
+		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
+			return []byte("Usage: podman run --pids-limit"), nil, 0, nil
+		}
 		return []byte("ok"), nil, 0, nil
 	}
 	runtimeName, err := probeContainerRuntime(context.Background())
@@ -535,6 +562,47 @@ func TestBuildContainerArgsAlwaysIncludesPidsLimit(t *testing.T) {
 	}
 }
 
+func TestRunContainerRefusesUnsupportedPidsLimitBeforeUserScript(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" {
+			return "/fake/docker", nil
+		}
+		return "", errors.New("not found")
+	}
+	var runCalls int
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 0 {
+			return nil, nil, -1, errors.New("empty command")
+		}
+		switch args[0] {
+		case "info":
+			return nil, nil, 0, nil
+		case "run":
+			if len(args) == 2 && args[1] == "--help" {
+				return []byte("Usage: docker run --memory 2g"), nil, 0, nil
+			}
+			runCalls++
+			return []byte("user script ran"), nil, 0, nil
+		case "rm":
+			return nil, nil, 0, nil
+		default:
+			return nil, nil, -1, errors.New("unexpected command")
+		}
+	}
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: "README.md:2", Shell: "sh", Script: "touch side-effect"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusFinding || !strings.Contains(result.Stderr, "--pids-limit") {
+		t.Fatalf("result=%#v", result)
+	}
+	if runCalls != 0 {
+		t.Fatalf("user script ran despite unsupported process limit: runCalls=%d", runCalls)
+	}
+}
+
 func TestRunContainerPidsLimitUnsupportedReportsWarning(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
@@ -552,11 +620,14 @@ func TestRunContainerPidsLimitUnsupportedReportsWarning(t *testing.T) {
 		switch args[0] {
 		case "info":
 			return nil, nil, 0, nil
-		case "rm":
-			return nil, nil, 0, nil
 		case "run":
+			if len(args) == 2 && args[1] == "--help" {
+				return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+			}
 			runCalls = append(runCalls, append([]string(nil), args...))
 			return nil, []byte("docker: unknown flag: --pids-limit"), 125, nil
+		case "rm":
+			return nil, nil, 0, nil
 		default:
 			return nil, nil, -1, errors.New("unexpected command")
 		}
@@ -597,6 +668,9 @@ func TestRunContainerDoesNotRetryRepositoryExit125(t *testing.T) {
 		case "info", "rm":
 			return nil, nil, 0, nil
 		case "run":
+			if len(args) == 2 && args[1] == "--help" {
+				return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+			}
 			runCalls++
 			return []byte("script output"), []byte("unsupported pids message from repository script"), 125, nil
 		default:
