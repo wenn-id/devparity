@@ -183,22 +183,24 @@ func TestReleaseWorkflowUsesReadOnlyBuildJobsAndPinnedActions(t *testing.T) {
 		t.Fatal("staticcheck installation must use the Linux quality gate")
 	}
 	testJobSteps := workflowJobSteps(t, verifyText, "test")
-	if !containsWorkflowRun(testJobSteps, "go mod tidy -diff") {
+	if !containsWorkflowRun(testJobSteps, "go mod tidy -diff", "runner.os == 'Linux'") {
 		t.Fatal("verify test job does not execute go mod tidy -diff")
 	}
-	if !containsWorkflowRun(testJobSteps, "staticcheck ./...") {
+	if !containsWorkflowRun(testJobSteps, "staticcheck ./...", "runner.os == 'Linux'") {
 		t.Fatal("verify test job does not execute staticcheck")
 	}
 }
 
-func workflowJobSteps(t *testing.T, workflow, job string) []string {
+type workflowStep struct {
+	Run string `yaml:"run"`
+	If  string `yaml:"if"`
+}
+
+func workflowJobSteps(t *testing.T, workflow, job string) []workflowStep {
 	t.Helper()
-	var steps []string
 	var parsed struct {
 		Jobs map[string]struct {
-			Steps []struct {
-				Run string `yaml:"run"`
-			} `yaml:"steps"`
+			Steps []workflowStep `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal([]byte(workflow), &parsed); err != nil {
@@ -208,17 +210,12 @@ func workflowJobSteps(t *testing.T, workflow, job string) []string {
 	if !ok {
 		t.Fatalf("workflow missing job %q", job)
 	}
-	for _, step := range jobData.Steps {
-		if step.Run != "" {
-			steps = append(steps, step.Run)
-		}
-	}
-	return steps
+	return jobData.Steps
 }
 
-func containsWorkflowRun(steps []string, command string) bool {
+func containsWorkflowRun(steps []workflowStep, command, condition string) bool {
 	for _, step := range steps {
-		if strings.TrimSpace(step) == command {
+		if strings.TrimSpace(step.Run) == command && strings.TrimSpace(step.If) == condition {
 			return true
 		}
 	}
