@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -154,12 +155,31 @@ func concreteNodeVersion(root string) (string, error) {
 		version = fact.Value
 	}
 	if version == "" {
-		if len(findings) > 0 {
+		if hasRelevantNodeVersionFinding(findings) {
 			return "", fmt.Errorf("node version is inconclusive for container execution")
 		}
 		return "", fmt.Errorf("container execution requires --node-version or one concrete .nvmrc/.node-version")
 	}
+	if hasRelevantNodeVersionFinding(findings) {
+		return "", fmt.Errorf("node version is inconclusive for container execution")
+	}
 	return version, nil
+}
+
+func hasRelevantNodeVersionFinding(findings []model.Finding) bool {
+	for _, finding := range findings {
+		for _, evidence := range finding.Evidence {
+			switch filepath.Base(evidence.Source.Path) {
+			case ".nvmrc", ".node-version":
+				return true
+			case ".tool-versions":
+				if !strings.Contains(finding.Message, "no nodejs entry found") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func staticDocsData(root string) (model.Report, []model.DocBlock, error) {
