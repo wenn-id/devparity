@@ -49,6 +49,22 @@ func TestDoctorCleanRepositoryHasNoFindingStatus(t *testing.T) {
 	}
 }
 
+func TestDocCommandFactsUseScriptLineNumbers(t *testing.T) {
+	facts := docCommandFacts([]model.DocBlock{{
+		Source: model.SourceRef{Path: "README.md", Line: 4},
+		Script: "npm test\nnpm run build",
+	}})
+	var commandLines []int
+	for _, fact := range facts {
+		if fact.Kind == model.FactKind("doc.command") {
+			commandLines = append(commandLines, fact.Source.Line)
+		}
+	}
+	if len(commandLines) != 2 || commandLines[0] != 5 || commandLines[1] != 6 {
+		t.Fatalf("facts=%#v, want command lines 5 and 6", facts)
+	}
+}
+
 func hasRule(findings []model.Finding, rule string) bool {
 	for _, finding := range findings {
 		if finding.RuleID == rule && finding.Status == model.StatusFinding {
