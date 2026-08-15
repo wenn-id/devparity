@@ -143,6 +143,9 @@ func concreteNodeVersion(root string) (string, error) {
 		return "", err
 	}
 	facts, findings := extract.VersionFiles(artifacts.Root, artifacts.VersionFiles)
+	if hasRelevantNodeVersionFinding(findings) {
+		return "", fmt.Errorf("node version is inconclusive for container execution")
+	}
 	versionPattern := regexp.MustCompile(`^\d+(?:\.\d+){0,2}$`)
 	version := ""
 	for _, fact := range facts {
@@ -155,13 +158,7 @@ func concreteNodeVersion(root string) (string, error) {
 		version = fact.Value
 	}
 	if version == "" {
-		if hasRelevantNodeVersionFinding(findings) {
-			return "", fmt.Errorf("node version is inconclusive for container execution")
-		}
 		return "", fmt.Errorf("container execution requires --node-version or one concrete .nvmrc/.node-version")
-	}
-	if hasRelevantNodeVersionFinding(findings) {
-		return "", fmt.Errorf("node version is inconclusive for container execution")
 	}
 	return version, nil
 }
