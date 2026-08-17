@@ -25,12 +25,15 @@ func textField(value string) string {
 }
 
 // markdownCell keeps an untrusted value inside one GitHub-flavored Markdown
-// table cell as literal text. Backslash is escaped first so later escapes
-// cannot combine into a single user-controlled Markdown escape sequence; then
-// every Markdown-significant delimiter — links, images, HTML, emphasis, code
-// spans, and the table cell separator — is backslash-escaped and line breaks
-// are collapsed to spaces.
+// table cell as literal text. Ampersand is escaped first so HTML entity
+// sequences in the source (e.g. &lt;) survive as literal text instead of
+// being decoded when the step summary renders; backslash is escaped next so
+// later escapes cannot combine into a single user-controlled Markdown escape
+// sequence; then every Markdown-significant delimiter — links, images, HTML,
+// emphasis, code spans, and the table cell separator — is backslash-escaped
+// and line breaks are collapsed to spaces.
 func markdownCell(value string) string {
+	value = strings.ReplaceAll(value, `&`, `&amp;`)
 	value = strings.ReplaceAll(value, `\`, `\\`)
 	for _, c := range []string{`|`, "`", `[`, `]`, `(`, `)`, `!`, `<`, `>`, `*`, `_`, `~`, `:`, `@`} {
 		value = strings.ReplaceAll(value, c, `\`+c)
