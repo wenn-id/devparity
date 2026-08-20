@@ -58,8 +58,7 @@ GITHUB_WORKSPACE="$WORKSPACE" \
 GITHUB_STEP_SUMMARY="$SUMMARY" \
 DEVPARITY_VERSION="$VERSION" \
 DEVPARITY_STRICT=false \
-DEVPARITY_RELEASE_BASE="file://$DIST" \
-  bash "$ROOT/scripts/action-entrypoint.sh"
+  bash "$ROOT/scripts/action-entrypoint.sh" "file://$DIST"
 
 # 5) The doctor summary must have been written by the downloaded binary.
 test -s "$SUMMARY"

@@ -4,8 +4,9 @@ set -euo pipefail
 # Composite-action entrypoint for non-Windows runners. Extracted from
 # action.yml so the release smoke test can exercise the exact download,
 # checksum-verify, and run logic against a local file:// release directory
-# before any tag is published. Production behavior is unchanged: the base URL
-# defaults to the public release download location.
+# before any tag is published. The shipped action passes no arguments, so its
+# base URL is always the public release download location. Tests may pass a
+# local release base as the first positional argument.
 #
 # Environment:
 #   RUNNER_OS             (required) e.g. Linux / macOS
@@ -14,7 +15,6 @@ set -euo pipefail
 #   DEVPARITY_VERSION     (required) release tag, e.g. v0.1.0-beta.1
 #   DEVPARITY_STRICT      (required) "true" to fail when drift is found
 #   GITHUB_WORKSPACE      (required) target repository to run doctor against
-#   DEVPARITY_RELEASE_BASE (optional) download base override (file:// in smoke)
 
 case "${RUNNER_OS}-${RUNNER_ARCH}" in
   Linux-X64) asset=devparity-linux-amd64 ;;
@@ -23,7 +23,7 @@ case "${RUNNER_OS}-${RUNNER_ARCH}" in
   macOS-ARM64) asset=devparity-darwin-arm64 ;;
   *) echo "unsupported runner" >&2; exit 2 ;;
 esac
-base="${DEVPARITY_RELEASE_BASE:-https://github.com/wenn-id/devparity/releases/download/${DEVPARITY_VERSION}}"
+base="${1:-https://github.com/wenn-id/devparity/releases/download/${DEVPARITY_VERSION}}"
 workdir="$(mktemp -d "${RUNNER_TEMP%/}/devparity.XXXXXX")"
 trap 'rm -rf "$workdir"' EXIT
 curl --fail --location --silent --show-error --output "$workdir/$asset" "${base}/${asset}"
