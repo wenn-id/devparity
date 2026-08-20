@@ -21,7 +21,20 @@ func TestCopyWorkspaceMakesNestedCopyAccessibleToContainerUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cleanup() })
+	parent := filepath.Dir(copy)
+	if parent == os.TempDir() {
+		t.Fatalf("workspace %q is exposed directly beneath the shared temp directory", copy)
+	}
+	parentInfo, err := os.Stat(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parentInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("workspace parent %q mode=%o, want 700", parent, parentInfo.Mode().Perm())
+	}
+	if filepath.Base(copy) != "workspace" {
+		t.Fatalf("workspace path=%q, want private-parent/workspace layout", copy)
+	}
 	for _, path := range []string{copy, filepath.Join(copy, "src")} {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -40,6 +53,12 @@ func TestCopyWorkspaceMakesNestedCopyAccessibleToContainerUser(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(copy, "container-artifact"), []byte("created"), 0o666); err != nil {
 		t.Fatalf("workspace is not writable: %v", err)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(parent); !os.IsNotExist(err) {
+		t.Fatalf("private workspace parent still exists after cleanup: %v", err)
 	}
 }
 
@@ -148,11 +167,15 @@ func TestCopyWorkspaceCancellationCleansUpPartialCopy(t *testing.T) {
 					close(timedOut)
 					return
 				}
-				for _, path := range paths {
-					if containsPath(before, path) {
+				for _, parent := range paths {
+					if containsPath(before, parent) {
 						continue
 					}
-					if _, statErr := os.Stat(filepath.Join(path, "a-first")); statErr == nil {
+					workspace := parent
+					if info, statErr := os.Stat(filepath.Join(parent, "workspace")); statErr == nil && info.IsDir() {
+						workspace = filepath.Join(parent, "workspace")
+					}
+					if _, statErr := os.Stat(filepath.Join(workspace, "a-first")); statErr == nil {
 						close(started)
 						cancel()
 						return
