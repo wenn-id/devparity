@@ -65,6 +65,32 @@ func ExecutionFindings(blocks []model.DocBlock, results []model.ExecutionResult)
 	return findings, nil
 }
 
+// CanExecute reports whether every non-empty line in a documentation block is
+// one of the direct Node package-manager commands accepted by Validate. Keep
+// this predicate beside validation so reporting and execution cannot drift.
+func CanExecute(block model.DocBlock) bool {
+	_, ok := parseCommands(block)
+	return ok
+}
+
+func parseCommands(block model.DocBlock) ([]nodecmd.Command, bool) {
+	commands := make([]nodecmd.Command, 0)
+	for _, line := range strings.Split(block.Script, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		command, ok := nodecmd.Parse(line)
+		if !ok {
+			return nil, false
+		}
+		commands = append(commands, command)
+	}
+	if len(commands) == 0 {
+		return nil, false
+	}
+	return commands, true
+}
+
 func Validate(blocks []model.DocBlock, facts []model.Fact) []model.Finding {
 	scripts := make(map[string]struct{})
 	for _, fact := range facts {
@@ -76,16 +102,8 @@ func Validate(blocks []model.DocBlock, facts []model.Fact) []model.Finding {
 	var findings []model.Finding
 	for _, block := range blocks {
 		missing := make(map[string]struct{})
-		unsupported := false
-		for _, line := range strings.Split(block.Script, "\n") {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			command, ok := nodecmd.Parse(line)
-			if !ok {
-				unsupported = true
-				continue
-			}
+		commands, supported := parseCommands(block)
+		for _, command := range commands {
 			if command.Script == "" {
 				continue
 			}
@@ -93,7 +111,7 @@ func Validate(blocks []model.DocBlock, facts []model.Fact) []model.Finding {
 				missing[command.Script] = struct{}{}
 			}
 		}
-		if unsupported {
+		if !supported {
 			findings = append(findings, model.Finding{
 				RuleID:     "doc-command-unsupported",
 				Severity:   model.SeverityWarning,

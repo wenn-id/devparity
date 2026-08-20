@@ -66,8 +66,8 @@ func TestDocsExecutionRequiresCompleteTrustFlags(t *testing.T) {
 func TestDocsHostExecutionRejectsMissingEnvironmentBeforeRunning(t *testing.T) {
 	root := t.TempDir()
 	marker := filepath.Join(root, "must-not-run")
-	writeCLIFile(t, root, "package.json", `{"scripts":{"test":"node --test"}}`)
-	writeCLIFile(t, root, "README.md", "<!-- devparity:run -->\n```sh\ntouch "+marker+"\n```\n")
+	writeCLIFile(t, root, "package.json", `{"scripts":{"test":"touch must-not-run"}}`)
+	writeCLIFile(t, root, "README.md", "<!-- devparity:run -->\n```sh\nnpm test\n```\n")
 	const variable = "DEVPARITY_TEST_CLI_MISSING"
 	previous, wasSet := os.LookupEnv(variable)
 	if err := os.Unsetenv(variable); err != nil {
@@ -94,10 +94,68 @@ func TestDocsHostExecutionRejectsMissingEnvironmentBeforeRunning(t *testing.T) {
 	}
 }
 
-func TestDocsHostExecutionReturnsFailureExitCode(t *testing.T) {
-	malicious := filepath.Join("..", "..", "testdata", "repos", "malicious-docs")
+func TestDocsExecutionSkipsUnsupportedCommands(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "host", args: []string{"--execute", "--trust-repository"}},
+		{name: "container", args: []string{"--container", "--node-version", "22"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			marker := filepath.Join(root, "must-not-run")
+			writeCLIFile(t, root, "package.json", `{"scripts":{"test":"node --test"}}`)
+			writeCLIFile(t, root, "README.md", "<!-- devparity:run -->\n```sh\ntouch "+marker+"\n```\n")
+
+			var stdout, stderr bytes.Buffer
+			args := append([]string{"docs", "verify", root}, tc.args...)
+			code := Run(args, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stdout.String(), "doc-command-unsupported") {
+				t.Fatalf("stdout=%q, missing unsupported-command finding", stdout.String())
+			}
+			if strings.Contains(stdout.String(), "docs-command-passed") || strings.Contains(stdout.String(), "docs-command-failed") || strings.Contains(stdout.String(), "docs-command-skipped") {
+				t.Fatalf("unsupported command received execution finding: stdout=%q", stdout.String())
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("unsupported documentation command ran: %v", err)
+			}
+		})
+	}
+}
+
+func TestDocsExecutionRunsSupportedBlocksAndSkipsUnsupportedBlocks(t *testing.T) {
+	root := t.TempDir()
+	unsupportedMarker := filepath.Join(root, "unsupported-ran")
+	supportedMarker := filepath.Join(root, "supported-ran")
+	writeCLIFile(t, root, "package.json", `{"scripts":{"test":"touch supported-ran"}}`)
+	writeCLIFile(t, root, "README.md", "<!-- devparity:run -->\n```sh\ntouch "+unsupportedMarker+"\n```\n\n<!-- devparity:run -->\n```sh\nnpm test\n```\n")
+
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"docs", "verify", malicious, "--execute", "--trust-repository", "--timeout", "100ms"}, &stdout, &stderr)
+	code := Run([]string{"docs", "verify", root, "--execute", "--trust-repository"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if strings.Count(stdout.String(), "doc-command-unsupported") != 1 || strings.Count(stdout.String(), "docs-command-passed") != 1 {
+		t.Fatalf("mixed execution findings are inconsistent: stdout=%q", stdout.String())
+	}
+	if _, err := os.Stat(unsupportedMarker); !os.IsNotExist(err) {
+		t.Fatalf("unsupported documentation command ran: %v", err)
+	}
+	if _, err := os.Stat(supportedMarker); err != nil {
+		t.Fatalf("supported documentation command did not run: %v", err)
+	}
+}
+
+func TestDocsHostExecutionReturnsFailureExitCode(t *testing.T) {
+	root := t.TempDir()
+	writeCLIFile(t, root, "package.json", `{"scripts":{"test":"sleep 2"}}`)
+	writeCLIFile(t, root, "README.md", "<!-- devparity:run -->\n```sh\nnpm test\n```\n")
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"docs", "verify", root, "--execute", "--trust-repository", "--timeout", "100ms"}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}

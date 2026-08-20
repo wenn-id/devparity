@@ -62,6 +62,25 @@ func TestValidateDoesNotGuessMissingScriptForUnrecognizedSyntax(t *testing.T) {
 	}
 }
 
+func TestCanExecuteUsesValidationCommandGrammar(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script string
+		want   bool
+	}{
+		{name: "direct commands", script: "npm ci\npnpm test\nyarn run lint", want: true},
+		{name: "empty block", script: "\n  \n", want: false},
+		{name: "mixed unsupported line", script: "npm test\necho pwned > marker", want: false},
+		{name: "substitution", script: "npm test $(uname)", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CanExecute(model.DocBlock{Script: tc.script}); got != tc.want {
+				t.Fatalf("CanExecute(%q)=%v, want %v", tc.script, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateRecognizesPackageScriptAliases(t *testing.T) {
 	blocks := []model.DocBlock{{
 		ID:     "README.md:2",
