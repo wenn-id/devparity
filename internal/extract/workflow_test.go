@@ -207,6 +207,55 @@ func TestWorkflowOnlyResolvesExactLocalMatrixReference(t *testing.T) {
 	assertWorkflowFact(t, facts, "workflow.command", "npm test", "exact.yml", 11)
 }
 
+func TestWorkflowIgnoresNonNodeRunSteps(t *testing.T) {
+	root := t.TempDir()
+	writeWorkflowFixture(t, root, "shell.yml", `jobs:
+  verify:
+    steps:
+      - run: go test ./...
+      - run: git diff --exit-code
+      - run: docker build .
+      - run: make test
+      - run: echo done
+      - run: echo npm install
+      - run: |
+          # npm install
+          echo still not a Node command
+`)
+
+	facts, findings := Workflows(root, []string{"shell.yml"})
+	if len(facts) != 0 || len(findings) != 0 {
+		t.Fatalf("facts=%#v findings=%#v, want both empty", facts, findings)
+	}
+}
+
+func TestWorkflowReportsOnlyMalformedNodeLikeRunSteps(t *testing.T) {
+	root := t.TempDir()
+	writeWorkflowFixture(t, root, "node-like.yml", `jobs:
+  verify:
+    steps:
+      - run: npm install
+      - run: npx eslint .
+      - run: bunx prettier .
+      - run: |
+          echo preparing
+          npm install
+`)
+
+	facts, findings := Workflows(root, []string{"node-like.yml"})
+	if len(facts) != 0 {
+		t.Fatalf("facts=%#v, want no parsed facts", facts)
+	}
+	if len(findings) != 4 {
+		t.Fatalf("findings=%#v, want four Node-like inconclusive findings", findings)
+	}
+	for _, finding := range findings {
+		if finding.RuleID != "workflow-unsupported" || finding.Status != model.StatusInconclusive {
+			t.Fatalf("finding=%#v, want workflow-unsupported inconclusive", finding)
+		}
+	}
+}
+
 func assertWorkflowFact(t *testing.T, facts []model.Fact, kind, value, path string, line int) {
 	t.Helper()
 	for _, fact := range facts {
