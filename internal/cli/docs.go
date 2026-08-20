@@ -71,56 +71,64 @@ func runDocs(args []string, stdout, stderr io.Writer) int {
 	}
 	executionFailed := false
 	if *executeCommands || *containerMode {
-		if *executeCommands {
-			fmt.Fprintln(stderr, "host execution is not sandboxed")
-		}
-		var hostGrant execute.Grant
-		if *executeCommands {
-			hostGrant, err = execute.NewHostGrant(true)
-		} else {
-			hostGrant = execute.NewContainerGrant()
-			if *nodeVersion == "" {
-				*nodeVersion, err = concreteNodeVersion(path)
-			}
-		}
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 2
-		}
-		environment, environmentErr := execute.SnapshotEnvironment(envNames)
-		if environmentErr != nil {
-			fmt.Fprintln(stderr, environmentErr)
-			return 2
-		}
-		results := make([]model.ExecutionResult, 0, len(blocks))
+		executableBlocks := make([]model.DocBlock, 0, len(blocks))
 		for _, block := range blocks {
-			options := execute.Options{Root: value.Repository, Timeout: *timeout, EnvNames: envNames, Environment: &environment, AllowNetwork: *allowNetwork, NodeVersion: *nodeVersion}
-			var result model.ExecutionResult
-			var runErr error
-			if *containerMode {
-				result, runErr = execute.RunContainer(context.Background(), hostGrant, block, options)
-			} else {
-				result, runErr = execute.RunHost(context.Background(), hostGrant, block, options)
+			if docs.CanExecute(block) {
+				executableBlocks = append(executableBlocks, block)
 			}
-			if runErr != nil {
-				fmt.Fprintln(stderr, runErr)
+		}
+		if len(executableBlocks) > 0 {
+			if *executeCommands {
+				fmt.Fprintln(stderr, "host execution is not sandboxed")
+			}
+			var hostGrant execute.Grant
+			if *executeCommands {
+				hostGrant, err = execute.NewHostGrant(true)
+			} else {
+				hostGrant = execute.NewContainerGrant()
+				if *nodeVersion == "" {
+					*nodeVersion, err = concreteNodeVersion(path)
+				}
+			}
+			if err != nil {
+				fmt.Fprintln(stderr, err)
 				return 2
 			}
-			results = append(results, result)
-		}
-		executionFindings, findingErr := docs.ExecutionFindings(blocks, results)
-		if findingErr != nil {
-			fmt.Fprintln(stderr, findingErr)
-			return 2
-		}
-		value.Results = append(value.Results, executionFindings...)
-		for _, finding := range executionFindings {
-			if finding.RuleID == "docs-command-failed" && finding.Status == model.StatusFinding {
-				executionFailed = true
+			environment, environmentErr := execute.SnapshotEnvironment(envNames)
+			if environmentErr != nil {
+				fmt.Fprintln(stderr, environmentErr)
+				return 2
 			}
+			results := make([]model.ExecutionResult, 0, len(executableBlocks))
+			for _, block := range executableBlocks {
+				options := execute.Options{Root: value.Repository, Timeout: *timeout, EnvNames: envNames, Environment: &environment, AllowNetwork: *allowNetwork, NodeVersion: *nodeVersion}
+				var result model.ExecutionResult
+				var runErr error
+				if *containerMode {
+					result, runErr = execute.RunContainer(context.Background(), hostGrant, block, options)
+				} else {
+					result, runErr = execute.RunHost(context.Background(), hostGrant, block, options)
+				}
+				if runErr != nil {
+					fmt.Fprintln(stderr, runErr)
+					return 2
+				}
+				results = append(results, result)
+			}
+			executionFindings, findingErr := docs.ExecutionFindings(blocks, results)
+			if findingErr != nil {
+				fmt.Fprintln(stderr, findingErr)
+				return 2
+			}
+			value.Results = append(value.Results, executionFindings...)
+			for _, finding := range executionFindings {
+				if finding.RuleID == "docs-command-failed" && finding.Status == model.StatusFinding {
+					executionFailed = true
+				}
+			}
+			model.SortFindings(value.Results)
+			value.Summary = model.Summarize(value.Results)
 		}
-		model.SortFindings(value.Results)
-		value.Summary = model.Summarize(value.Results)
 	}
 	if *format == "json" {
 		err = report.JSON(stdout, value)
