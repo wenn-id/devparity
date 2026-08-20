@@ -144,6 +144,15 @@ func TestActionUsesPortableWorkspaceSafeDownloadSteps(t *testing.T) {
 			t.Fatalf("action still relies on forbidden behavior %q", forbidden)
 		}
 	}
+	if strings.Contains(entrypointText, "DEVPARITY_RELEASE_BASE") {
+		t.Fatal("shipped action entrypoint must not accept a release-base environment override")
+	}
+	if !strings.Contains(entrypointText, `base="${1:-https://github.com/wenn-id/devparity/releases/download/${DEVPARITY_VERSION}}"`) {
+		t.Fatal("action entrypoint must derive its production base from the fixed release URL")
+	}
+	if !strings.Contains(read("scripts", "release-smoke.sh"), `bash "$ROOT/scripts/action-entrypoint.sh" "file://$DIST"`) {
+		t.Fatal("release smoke must pass its local fixture base explicitly")
+	}
 }
 
 func TestActionChecksumWorksOnMacOS(t *testing.T) {
