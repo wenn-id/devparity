@@ -135,6 +135,7 @@ func TestDocsExecutionIgnoresMarkedBlocksInsideOuterFence(t *testing.T) {
 	}{
 		{name: "top level", readme: "````markdown\n<!-- devparity:run -->\n```sh\nnpm test\n```\n````\n"},
 		{name: "list item", readme: "- ````markdown\n  <!-- devparity:run -->\n  ```sh\n  npm test\n  ```\n  ````\n"},
+		{name: "tab-separated list item", readme: "-	````markdown\n    <!-- devparity:run -->\n    ```sh\n    npm test\n    ```\n    ````\n"},
 		{name: "ordered list followed by live block", readme: "12. ````markdown\n    <!-- devparity:run -->\n    ```sh\n    npm test\n    ```\n    ````\n\n<!-- devparity:run -->\n```sh\nnpm test\n```\n", wantLive: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {

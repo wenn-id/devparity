@@ -84,7 +84,7 @@ func extractFile(path string, data []byte) ([]model.DocBlock, []model.Finding) {
 			if !supportedShells[shell] {
 				findings = append(findings, docFinding("doc-shell-unsupported", path, openingLine, fmt.Sprintf("unsupported documentation shell %q", shell)))
 				state = 3
-				outerIndent = 0
+				outerIndent = leadingSpaces(line)
 				continue
 			}
 			state = 2
@@ -155,19 +155,38 @@ func docOuterFence(line string) (byte, int, string, int, bool) {
 		return 0, 0, "", 0, false
 	}
 	indent := leadingSpaces(line)
-	if len(content) >= 2 && (content[0] == '-' || content[0] == '+' || content[0] == '*') && content[1] == ' ' {
-		fence, length, info, ok := docFence(content[2:])
-		return fence, length, info, indent + 2, ok
+	if len(content) >= 2 && (content[0] == '-' || content[0] == '+' || content[0] == '*') {
+		return docListFence(content, 1, indent)
 	}
 	index := 0
 	for index < len(content) && content[index] >= '0' && content[index] <= '9' {
 		index++
 	}
-	if index > 0 && index+1 < len(content) && (content[index] == '.' || content[index] == ')') && content[index+1] == ' ' {
-		fence, length, info, ok := docFence(content[index+2:])
-		return fence, length, info, indent + index + 2, ok
+	if index > 0 && index < len(content) && (content[index] == '.' || content[index] == ')') {
+		return docListFence(content, index+1, indent)
 	}
 	return 0, 0, "", 0, false
+}
+
+func docListFence(content string, markerLength, initialIndent int) (byte, int, string, int, bool) {
+	if markerLength >= len(content) || (content[markerLength] != ' ' && content[markerLength] != '	') {
+		return 0, 0, "", 0, false
+	}
+	index := markerLength
+	column := initialIndent + markerLength
+	for index < len(content) && (content[index] == ' ' || content[index] == '	') {
+		if content[index] == '	' {
+			column += 4 - column%4
+		} else {
+			column++
+		}
+		index++
+	}
+	if index == len(content) {
+		return 0, 0, "", 0, false
+	}
+	fence, length, info, ok := docFence(content[index:])
+	return fence, length, info, column, ok
 }
 
 func closesDocFence(line string, char byte, minimumLength int) bool {

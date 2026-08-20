@@ -103,6 +103,14 @@ func TestExtractIgnoresMarkersInsideListItemOuterFences(t *testing.T) {
 			name:  "ordered list",
 			input: "1. ~~~~markdown\n   <!-- devparity:run -->\n   ~~~sh\n   npm run nonexistent\n   ~~~\n   ~~~~\n",
 		},
+		{
+			name:  "tab-separated unordered list",
+			input: "-	````markdown\n    <!-- devparity:run -->\n    ```sh\n    npm run nonexistent\n    ```\n    ````\n",
+		},
+		{
+			name:  "tab-separated ordered list",
+			input: "1.	~~~~markdown\n    <!-- devparity:run -->\n    ~~~sh\n    npm run nonexistent\n    ~~~\n    ~~~~\n",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			blocks, findings := extractFixture(t, test.input)
@@ -110,6 +118,17 @@ func TestExtractIgnoresMarkersInsideListItemOuterFences(t *testing.T) {
 				t.Fatalf("blocks=%#v findings=%#v, want inert list-contained outer fence", blocks, findings)
 			}
 		})
+	}
+}
+
+func TestExtractKeepsIndentedUnsupportedFenceInert(t *testing.T) {
+	input := "- example:\n  <!-- devparity:run -->\n  ```python\n```\n  <!-- devparity:run -->\n  ~~~sh\n  npm run nonexistent\n  ~~~\n  ```\n\n<!-- devparity:run -->\n```sh\nnpm test\n```\n"
+	blocks, findings := extractFixture(t, input)
+	if len(findings) != 1 || findings[0].RuleID != "doc-shell-unsupported" {
+		t.Fatalf("findings=%#v, want one unsupported-shell finding", findings)
+	}
+	if len(blocks) != 1 || blocks[0].Script != "npm test" || blocks[0].Source.Line != 12 {
+		t.Fatalf("blocks=%#v, want only the live block after the matching indented close", blocks)
 	}
 }
 
