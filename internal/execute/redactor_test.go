@@ -23,3 +23,43 @@ func TestRedactorRemovesForwardedAndKnownTokens(t *testing.T) {
 		t.Fatal("PEM body remained")
 	}
 }
+
+func TestRedactorDoesNotCorruptLowEntropyForwardedValues(t *testing.T) {
+	r := NewRedactor([]string{"1", "1234567890", "18.20.1", "2026-08-20", "1.2.3", "ⅣⅣⅣⅣⅣⅣ", "true", "false", "test", "dev", "UTC", "stable", "normal"})
+	input := "node 18.20.1 installed in 12 seconds on 2026-08-20; env=test mode=dev zone=UTC channel=stable state=normal roman=ⅣⅣⅣⅣⅣⅣ"
+	if got := r.Redact(input); got != input {
+		t.Fatalf("low-entropy values corrupted output: got %q, want %q", got, input)
+	}
+}
+
+func TestForwardedRedactionEligibilityBoundary(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  bool
+	}{
+		{value: "abcde", want: false},
+		{value: "123456", want: false},
+		{value: "18.20.1", want: false},
+		{value: "2026-08-20", want: false},
+		{value: "ⅣⅣⅣⅣⅣⅣ", want: false},
+		{value: "stable", want: false},
+		{value: "normal", want: false},
+		{value: "before", want: true},
+		{value: "abc123", want: true},
+		{value: "s3cr3t-value-42", want: true},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			if got := shouldRedactForwardedValue(test.value); got != test.want {
+				t.Fatalf("shouldRedactForwardedValue(%q)=%v, want %v", test.value, got, test.want)
+			}
+		})
+	}
+}
+
+func TestRedactorStillRemovesSpecificForwardedValues(t *testing.T) {
+	const secret = "s3cr3t-value-42"
+	r := NewRedactor([]string{secret})
+	if got := r.Redact("token=" + secret); got != "token=[REDACTED]" {
+		t.Fatalf("specific forwarded value was not redacted: %q", got)
+	}
+}

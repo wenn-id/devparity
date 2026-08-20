@@ -322,7 +322,7 @@ Host execution:
 - caps captured stdout and stderr at 1 MiB per stream;
 - inherits only `PATH`, platform temporary-directory variables, `HOME` or `USERPROFILE`, and `SYSTEMROOT` on Windows;
 - forwards each additional variable only through a repeated `--env <name>` flag;
-- redacts exact forwarded values, GitHub and npm token formats, bearer tokens, and PEM private-key bodies before display;
+- redacts exact forwarded values when they are at least six Unicode characters long, contain letters, and are not common low-entropy states; GitHub and npm token formats, bearer tokens, and PEM private-key bodies are redacted unconditionally before display;
 - cannot promise filesystem or network isolation.
 
 The user must trust the repository before selecting this mode.
@@ -389,7 +389,7 @@ Tests must prove that:
 - host execution fails unless both trust flags are present;
 - timeouts terminate child processes;
 - output limits truncate safely;
-- forwarded secret values are redacted;
+- sufficiently specific forwarded secret values are redacted; short, numeric-looking, and common low-entropy values are forwarded without becoming exact substring redaction patterns so ordinary output is not corrupted;
 - source symlinks cannot escape the repository;
 - container execution has no network by default;
 - the original source tree remains unchanged;

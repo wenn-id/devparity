@@ -1,6 +1,13 @@
 package execute
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+const minForwardedRedactionLength = 6
 
 type Redactor struct {
 	patterns []*regexp.Regexp
@@ -9,7 +16,7 @@ type Redactor struct {
 func NewRedactor(values []string) Redactor {
 	patterns := make([]*regexp.Regexp, 0, len(values)+4)
 	for _, value := range values {
-		if value != "" {
+		if shouldRedactForwardedValue(value) {
 			patterns = append(patterns, regexp.MustCompile(regexp.QuoteMeta(value)))
 		}
 	}
@@ -20,6 +27,22 @@ func NewRedactor(values []string) Redactor {
 		regexp.MustCompile(`-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----`),
 	)
 	return Redactor{patterns: patterns}
+}
+
+func shouldRedactForwardedValue(value string) bool {
+	if utf8.RuneCountInString(value) < minForwardedRedactionLength {
+		return false
+	}
+	switch strings.ToLower(value) {
+	case "true", "false", "test", "dev", "stable", "normal", "utc":
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsLetter(character) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r Redactor) Redact(value string) string {

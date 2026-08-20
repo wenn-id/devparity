@@ -41,6 +41,26 @@ func TestRunHostSuccessUsesMinimalForwardedEnvironment(t *testing.T) {
 	}
 }
 
+func TestRunHostDoesNotCorruptOutputForLowEntropyForwardedEnvironment(t *testing.T) {
+	grant, err := NewHostGrant(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CI", "1")
+	result, err := RunHost(context.Background(), grant, model.DocBlock{
+		ID:     "README.md:2",
+		Shell:  "sh",
+		Script: `printf '%s|node 18.20.1 installed in 12 seconds' "$CI"`,
+	}, Options{Root: t.TempDir(), EnvNames: []string{"CI"}, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "1|node 18.20.1 installed in 12 seconds"
+	if result.Stdout != want {
+		t.Fatalf("low-entropy environment corrupted output: got %q, want %q", result.Stdout, want)
+	}
+}
+
 func TestRunHostRejectsMissingRequestedEnvironmentBeforeExecution(t *testing.T) {
 	grant, err := NewHostGrant(true)
 	if err != nil {
