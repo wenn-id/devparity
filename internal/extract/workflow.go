@@ -156,7 +156,9 @@ func workflowSteps(path string, job *yaml.Node, matrix matrixValues) ([]model.Fa
 			}
 			command, ok := nodecmd.Parse(run.Value)
 			if !ok {
-				findings = append(findings, workflowUnsupported(path, run.Line, fmt.Sprintf("unsupported workflow command %q", run.Value)))
+				if workflowCommandLooksNodeLike(run.Value) {
+					findings = append(findings, workflowUnsupported(path, run.Line, fmt.Sprintf("unsupported workflow command %q", run.Value)))
+				}
 				continue
 			}
 			subject := command.Script
@@ -172,6 +174,23 @@ func workflowSteps(path string, job *yaml.Node, matrix matrixValues) ([]model.Fa
 		}
 	}
 	return facts, findings
+}
+
+func workflowCommandLooksNodeLike(value string) bool {
+	for _, line := range strings.Split(value, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
+			continue
+		}
+		switch fields[0] {
+		case "npm", "pnpm", "yarn", "npx", "bunx":
+			return true
+		}
+		if strings.Contains(line, "<<") {
+			return false
+		}
+	}
+	return false
 }
 
 func setupNodeFacts(path string, step *yaml.Node, matrix matrixValues) ([]model.Fact, *model.Finding) {
