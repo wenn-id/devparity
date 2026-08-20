@@ -562,6 +562,18 @@ func TestBuildContainerArgsAlwaysIncludesPidsLimit(t *testing.T) {
 	}
 }
 
+func TestContainerForwardsLowEntropyEnvironmentWithoutUsingItAsRedactionPattern(t *testing.T) {
+	environment := &EnvironmentSnapshot{forwarded: []string{"CI=1"}, secrets: []string{"1"}}
+	args := buildContainerArgs("devparity-test", "/tmp/workspace", "22", "sh", []string{"-eu", "-c", "true"}, environment, Options{})
+	if !containsArg(args, "CI=1") {
+		t.Fatalf("forwarded environment missing from args=%#v", args)
+	}
+	input := "node 18.20.1 installed in 12 seconds"
+	if got := environment.redactor().Redact(input); got != input {
+		t.Fatalf("low-entropy environment corrupted container output: got %q, want %q", got, input)
+	}
+}
+
 func TestRunContainerRefusesUnsupportedPidsLimitBeforeUserScript(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
 	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
