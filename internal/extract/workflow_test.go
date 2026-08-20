@@ -221,6 +221,16 @@ func TestWorkflowIgnoresNonNodeRunSteps(t *testing.T) {
       - run: |
           # npm install
           echo still not a Node command
+      - run: |
+          cat <<'NODE_COMMANDS'
+          npm install
+          NODE_COMMANDS
+          echo done
+      - run: |
+          cat <<-NODE_COMMANDS
+          npx eslint .
+          NODE_COMMANDS
+          echo done
 `)
 
 	facts, findings := Workflows(root, []string{"shell.yml"})
@@ -240,6 +250,11 @@ func TestWorkflowReportsOnlyMalformedNodeLikeRunSteps(t *testing.T) {
       - run: |
           echo preparing
           npm install
+      - run: |
+          cat <<'NODE_COMMANDS'
+          npm test
+          NODE_COMMANDS
+          npm install
 `)
 
 	facts, findings := Workflows(root, []string{"node-like.yml"})
@@ -253,6 +268,28 @@ func TestWorkflowReportsOnlyMalformedNodeLikeRunSteps(t *testing.T) {
 		if finding.RuleID != "workflow-unsupported" || finding.Status != model.StatusInconclusive {
 			t.Fatalf("finding=%#v, want workflow-unsupported inconclusive", finding)
 		}
+	}
+}
+
+func TestWorkflowNodeLikeDetectionTreatsHeredocScalarsAsOpaque(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "quoted heredoc payload", value: "cat <<'EOF'\nnpm install\nEOF\necho done", want: false},
+		{name: "tab stripped payload", value: "cat <<-EOF\n	npx eslint .\n	EOF\necho done", want: false},
+		{name: "multiple payloads", value: "cat <<A <<'B'\nnpm test\nA\nyarn lint\nB\necho done", want: false},
+		{name: "node command is literal first token", value: "npm install <<EOF\ndata\nEOF", want: true},
+		{name: "ordinary multiline node command", value: "echo preparing\nnpm install", want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := workflowCommandLooksNodeLike(test.value); got != test.want {
+				t.Fatalf("workflowCommandLooksNodeLike(%q)=%v, want %v", test.value, got, test.want)
+			}
+		})
 	}
 }
 

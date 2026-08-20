@@ -179,12 +179,15 @@ func workflowSteps(path string, job *yaml.Node, matrix matrixValues) ([]model.Fa
 func workflowCommandLooksNodeLike(value string) bool {
 	for _, line := range strings.Split(value, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 0 {
+		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
 			continue
 		}
 		switch fields[0] {
 		case "npm", "pnpm", "yarn", "npx", "bunx":
 			return true
+		}
+		if strings.Contains(line, "<<") {
+			return false
 		}
 	}
 	return false
