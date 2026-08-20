@@ -44,7 +44,7 @@ func evaluateMissingScripts(facts []model.Fact) []model.Finding {
 			continue
 		}
 		command, parsed := nodecmd.Parse(fact.Value)
-		if parsed && command.Operation == "install" {
+		if parsed && (command.Operation == "install" || command.Operation == "builtin") {
 			continue
 		}
 		if _, ok := available[fact.Subject]; !ok {

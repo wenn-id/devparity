@@ -77,6 +77,15 @@ func docCommandFacts(blocks []model.DocBlock) []model.Fact {
 			if !ok {
 				continue
 			}
+			if command.Operation == "builtin" {
+				facts = append(facts, model.Fact{
+					Kind:    model.FactKind("package.manager.command"),
+					Subject: command.Operation,
+					Value:   command.Manager,
+					Source:  model.SourceRef{Path: block.Source.Path, Line: block.Source.Line + offset + 1, Field: "documentation"},
+				})
+				continue
+			}
 			subject := command.Script
 			if subject == "" {
 				subject = command.Operation

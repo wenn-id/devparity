@@ -86,6 +86,7 @@ func TestCanExecuteUsesValidationCommandGrammar(t *testing.T) {
 	}{
 		{name: "direct commands", script: "npm ci\npnpm test\nyarn run lint", want: true},
 		{name: "comments and install aliases", script: "# install\nnpm install\npnpm i\nyarn", want: true},
+		{name: "package-manager builtins are not executable", script: "pnpm update\nyarn publish", want: false},
 		{name: "comments only", script: "# nothing to execute\n  # still nothing", want: false},
 		{name: "empty block", script: "\n  \n", want: false},
 		{name: "mixed unsupported line", script: "npm test\necho pwned > marker", want: false},

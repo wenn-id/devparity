@@ -275,6 +275,27 @@ func TestWorkflowReportsOnlyMalformedNodeLikeRunSteps(t *testing.T) {
 	}
 }
 
+func TestWorkflowDoesNotTreatPackageManagerBuiltinsAsScripts(t *testing.T) {
+	root := t.TempDir()
+	writeWorkflowFixture(t, root, "builtins.yml", `jobs:
+  verify:
+    steps:
+      - run: pnpm update
+      - run: pnpm list
+      - run: yarn remove
+      - run: pnpm run build
+`)
+
+	facts, findings := Workflows(root, []string{"builtins.yml"})
+	if len(facts) != 4 {
+		t.Fatalf("facts=%#v, want three builtin facts and one shorthand script fact", facts)
+	}
+	assertWorkflowFact(t, facts, "workflow.command", "pnpm run build", "builtins.yml", 7)
+	if len(findings) != 0 {
+		t.Fatalf("findings=%#v, want no findings for recognized builtins", findings)
+	}
+}
+
 func TestWorkflowNodeLikeDetectionTreatsHeredocScalarsAsOpaque(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -69,8 +69,16 @@ func ExecutionFindings(blocks []model.DocBlock, results []model.ExecutionResult)
 // one of the direct Node package-manager commands accepted by Validate. Keep
 // this predicate beside validation so reporting and execution cannot drift.
 func CanExecute(block model.DocBlock) bool {
-	_, ok := parseCommands(block)
-	return ok
+	commands, ok := parseCommands(block)
+	if !ok {
+		return false
+	}
+	for _, command := range commands {
+		if command.Operation == "builtin" {
+			return false
+		}
+	}
+	return true
 }
 
 func parseCommands(block model.DocBlock) ([]nodecmd.Command, bool) {
