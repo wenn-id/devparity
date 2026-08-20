@@ -258,11 +258,15 @@ func TestWorkflowReportsOnlyMalformedNodeLikeRunSteps(t *testing.T) {
 `)
 
 	facts, findings := Workflows(root, []string{"node-like.yml"})
-	if len(facts) != 0 {
-		t.Fatalf("facts=%#v, want no parsed facts", facts)
+	if len(facts) != 1 {
+		t.Fatalf("facts=%#v, want npm install fact", facts)
 	}
-	if len(findings) != 4 {
-		t.Fatalf("findings=%#v, want four Node-like inconclusive findings", findings)
+	assertWorkflowFact(t, facts, "workflow.command", "npm install", "node-like.yml", 4)
+	if facts[0].Subject != "install" {
+		t.Fatalf("fact=%#v, want install subject", facts[0])
+	}
+	if len(findings) != 3 {
+		t.Fatalf("findings=%#v, want three Node-like inconclusive findings", findings)
 	}
 	for _, finding := range findings {
 		if finding.RuleID != "workflow-unsupported" || finding.Status != model.StatusInconclusive {

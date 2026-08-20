@@ -52,6 +52,17 @@ func TestEvaluateMissingPackageScript(t *testing.T) {
 	}
 }
 
+func TestEvaluateMissingPackageScriptDistinguishesInstallFromYarnCiScript(t *testing.T) {
+	findings := Evaluate([]model.Fact{
+		fact("workflow.command", "install", "npm ci", ".github/workflows/ci.yml", 4),
+		fact("workflow.command", "ci", "yarn ci", ".github/workflows/ci.yml", 5),
+	})
+	finding := mustFinding(t, findings, "missing-package-script")
+	if len(finding.Evidence) != 1 || finding.Evidence[0].Value != "yarn ci" {
+		t.Fatalf("finding=%#v, want only yarn ci evidence", finding)
+	}
+}
+
 func TestEvaluateWorkflowCommandDrift(t *testing.T) {
 	finding := mustFinding(t, Evaluate([]model.Fact{
 		fact("doc.command", "test", "npm test", "README.md", 8),

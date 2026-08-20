@@ -22,7 +22,7 @@ func Parse(line string) (Command, bool) {
 	switch command.Manager {
 	case "npm":
 		switch {
-		case len(fields) == 2 && fields[1] == "ci":
+		case len(fields) == 2 && npmInstallAlias(fields[1]):
 			command.Operation = "install"
 		case len(fields) == 3 && fields[1] == "run":
 			command.Operation, command.Script = "script", fields[2]
@@ -31,8 +31,27 @@ func Parse(line string) (Command, bool) {
 		default:
 			return Command{}, false
 		}
-	case "pnpm", "yarn":
+	case "pnpm":
 		switch {
+		case len(fields) == 3 && fields[1] == "run":
+			command.Operation, command.Script = "script", fields[2]
+		case len(fields) == 2 && pnpmInstallAlias(fields[1]):
+			command.Operation = "install"
+		case len(fields) == 2 && fields[1] == "add":
+			return Command{}, false
+		case len(fields) == 2 && fields[1] != "run":
+			command.Operation, command.Script = fields[1], fields[1]
+		default:
+			return Command{}, false
+		}
+	case "yarn":
+		switch {
+		case len(fields) == 1:
+			command.Operation = "install"
+		case len(fields) == 2 && fields[1] == "install":
+			command.Operation = "install"
+		case len(fields) == 2 && fields[1] == "add":
+			return Command{}, false
 		case len(fields) == 3 && fields[1] == "run":
 			command.Operation, command.Script = "script", fields[2]
 		case len(fields) == 2 && fields[1] != "run":
@@ -44,6 +63,24 @@ func Parse(line string) (Command, bool) {
 		return Command{}, false
 	}
 	return command, true
+}
+
+func npmInstallAlias(value string) bool {
+	switch value {
+	case "install", "i", "add", "ci":
+		return true
+	default:
+		return false
+	}
+}
+
+func pnpmInstallAlias(value string) bool {
+	switch value {
+	case "install", "i", "ci":
+		return true
+	default:
+		return false
+	}
 }
 
 func unsafe(fields []string) bool {

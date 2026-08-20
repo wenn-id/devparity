@@ -7,9 +7,19 @@ func TestParse(t *testing.T) {
 		line, manager, operation, script string
 	}{
 		{"npm ci", "npm", "install", ""},
+		{"npm install", "npm", "install", ""},
+		{"npm i", "npm", "install", ""},
+		{"npm add", "npm", "install", ""},
 		{"npm run integration", "npm", "script", "integration"},
 		{"npm test", "npm", "test", "test"},
+		{"pnpm install", "pnpm", "install", ""},
+		{"pnpm i", "pnpm", "install", ""},
+		{"pnpm ci", "pnpm", "install", ""},
 		{"pnpm build", "pnpm", "build", "build"},
+		{"yarn", "yarn", "install", ""},
+		{"yarn install", "yarn", "install", ""},
+		{"yarn i", "yarn", "i", "i"},
+		{"yarn ci", "yarn", "ci", "ci"},
 		{"yarn run lint", "yarn", "script", "lint"},
 	}
 	for _, tt := range tests {
@@ -45,13 +55,13 @@ func TestParseRejectsUnapprovedForms(t *testing.T) {
 	for _, line := range []string{
 		"",
 		"bun install",
-		"npm install",
 		"npm run",
 		"npm run a b",
 		"npm ci extra",
 		"pnpm",
-		"yarn",
+		"pnpm add",
 		"yarn run",
+		"yarn add",
 		"yarn run lint extra",
 		"pnpm run build extra",
 	} {

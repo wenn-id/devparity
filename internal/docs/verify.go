@@ -76,7 +76,8 @@ func CanExecute(block model.DocBlock) bool {
 func parseCommands(block model.DocBlock) ([]nodecmd.Command, bool) {
 	commands := make([]nodecmd.Command, 0)
 	for _, line := range strings.Split(block.Script, "\n") {
-		if strings.TrimSpace(line) == "" {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 		command, ok := nodecmd.Parse(line)

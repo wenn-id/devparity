@@ -49,6 +49,22 @@ func TestValidatePassesWhenRecognizedScriptsExist(t *testing.T) {
 	}
 }
 
+func TestValidateSkipsCommentsAndRecognizesInstallCommands(t *testing.T) {
+	block := model.DocBlock{
+		ID:     "README.md:2",
+		Shell:  "sh",
+		Script: "# install dependencies\n  # package-manager aliases\nnpm install\npnpm i\nyarn\nnpm run build",
+		Source: model.SourceRef{Path: "README.md", Line: 2},
+	}
+	findings := Validate([]model.DocBlock{block}, []model.Fact{{Kind: model.FactKind("package.script"), Subject: "build"}})
+	if len(findings) != 1 || findings[0].RuleID != "doc-script-validation" || findings[0].Status != model.StatusPass {
+		t.Fatalf("findings=%#v", findings)
+	}
+	if !CanExecute(block) {
+		t.Fatal("commented install block should use the validation command grammar")
+	}
+}
+
 func TestValidateDoesNotGuessMissingScriptForUnrecognizedSyntax(t *testing.T) {
 	blocks := []model.DocBlock{{
 		ID:     "README.md:2",
@@ -69,6 +85,8 @@ func TestCanExecuteUsesValidationCommandGrammar(t *testing.T) {
 		want   bool
 	}{
 		{name: "direct commands", script: "npm ci\npnpm test\nyarn run lint", want: true},
+		{name: "comments and install aliases", script: "# install\nnpm install\npnpm i\nyarn", want: true},
+		{name: "comments only", script: "# nothing to execute\n  # still nothing", want: false},
 		{name: "empty block", script: "\n  \n", want: false},
 		{name: "mixed unsupported line", script: "npm test\necho pwned > marker", want: false},
 		{name: "substitution", script: "npm test $(uname)", want: false},
