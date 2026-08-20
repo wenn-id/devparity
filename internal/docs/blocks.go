@@ -43,10 +43,13 @@ func Extract(root string, paths []string) ([]model.DocBlock, []model.Finding) {
 func extractFile(path string, data []byte) ([]model.DocBlock, []model.Finding) {
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	scanner.Buffer(make([]byte, 64*1024), maxDocScannerBuffer)
-	state := 0 // 0 normal, 1 marker seen, 2 in fence
+	state := 0 // 0 normal, 1 marker seen, 2 in marked fence, 3 in outer fence
 	lineNumber := 0
 	markerLine := 0
 	openingLine := 0
+	var fenceChar byte
+	var fenceLength int
+	var outerIndent int
 	var shell string
 	var script []string
 	var blocks []model.DocBlock
@@ -57,26 +60,37 @@ func extractFile(path string, data []byte) ([]model.DocBlock, []model.Finding) {
 		line := scanner.Text()
 		switch state {
 		case 0:
-			if line == docMarker {
+			if isDocMarker(line) {
 				state = 1
 				markerLine = lineNumber
+				continue
+			}
+			if char, length, _, indent, ok := docOuterFence(line); ok {
+				state = 3
+				fenceChar = char
+				fenceLength = length
+				outerIndent = indent
 			}
 		case 1:
-			if strings.HasPrefix(line, "```") {
-				shell = strings.TrimSpace(strings.TrimPrefix(line, "```"))
-				openingLine = lineNumber
-				if !supportedShells[shell] {
-					findings = append(findings, docFinding("doc-shell-unsupported", path, openingLine, fmt.Sprintf("unsupported documentation shell %q", shell)))
-					state = 0
-					continue
-				}
-				state = 2
-				script = nil
-			} else {
+			char, length, info, ok := docFence(line)
+			if !ok {
 				state = 0
+				continue
 			}
+			shell = info
+			openingLine = lineNumber
+			fenceChar = char
+			fenceLength = length
+			if !supportedShells[shell] {
+				findings = append(findings, docFinding("doc-shell-unsupported", path, openingLine, fmt.Sprintf("unsupported documentation shell %q", shell)))
+				state = 3
+				outerIndent = leadingSpaces(line)
+				continue
+			}
+			state = 2
+			script = nil
 		case 2:
-			if strings.TrimSpace(line) == "```" {
+			if closesDocFence(line, fenceChar, fenceLength) {
 				blocks = append(blocks, model.DocBlock{
 					ID:     fmt.Sprintf("%s:%d", path, openingLine),
 					Shell:  shell,
@@ -88,6 +102,10 @@ func extractFile(path string, data []byte) ([]model.DocBlock, []model.Finding) {
 			} else {
 				script = append(script, line)
 			}
+		case 3:
+			if closesOuterFence(line, fenceChar, fenceLength, outerIndent) {
+				state = 0
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -98,6 +116,110 @@ func extractFile(path string, data []byte) ([]model.DocBlock, []model.Finding) {
 		findings = append(findings, docFinding("doc-block-unterminated", path, openingLine, "documentation code fence is not terminated"))
 	}
 	return blocks, findings
+}
+
+func isDocMarker(line string) bool {
+	content, ok := docIndentedContent(line)
+	return ok && strings.TrimRight(content, " 	") == docMarker
+}
+
+func docFence(line string) (byte, int, string, bool) {
+	var ok bool
+	line, ok = docIndentedContent(line)
+	if !ok {
+		return 0, 0, "", false
+	}
+	if len(line) < 3 || (line[0] != '`' && line[0] != '~') {
+		return 0, 0, "", false
+	}
+	char := line[0]
+	length := 0
+	for length < len(line) && line[length] == char {
+		length++
+	}
+	if length < 3 {
+		return 0, 0, "", false
+	}
+	if char == '`' && strings.Contains(strings.TrimSpace(line[length:]), "`") {
+		return 0, 0, "", false
+	}
+	return char, length, strings.TrimSpace(line[length:]), true
+}
+
+func docOuterFence(line string) (byte, int, string, int, bool) {
+	if fence, length, info, ok := docFence(line); ok {
+		return fence, length, info, 0, true
+	}
+	content, ok := docIndentedContent(line)
+	if !ok {
+		return 0, 0, "", 0, false
+	}
+	indent := leadingSpaces(line)
+	if len(content) >= 2 && (content[0] == '-' || content[0] == '+' || content[0] == '*') {
+		return docListFence(content, 1, indent)
+	}
+	index := 0
+	for index < len(content) && content[index] >= '0' && content[index] <= '9' {
+		index++
+	}
+	if index > 0 && index < len(content) && (content[index] == '.' || content[index] == ')') {
+		return docListFence(content, index+1, indent)
+	}
+	return 0, 0, "", 0, false
+}
+
+func docListFence(content string, markerLength, initialIndent int) (byte, int, string, int, bool) {
+	if markerLength >= len(content) || (content[markerLength] != ' ' && content[markerLength] != '	') {
+		return 0, 0, "", 0, false
+	}
+	index := markerLength
+	column := initialIndent + markerLength
+	for index < len(content) && (content[index] == ' ' || content[index] == '	') {
+		if content[index] == '	' {
+			column += 4 - column%4
+		} else {
+			column++
+		}
+		index++
+	}
+	if index == len(content) {
+		return 0, 0, "", 0, false
+	}
+	fence, length, info, ok := docFence(content[index:])
+	return fence, length, info, column, ok
+}
+
+func closesDocFence(line string, char byte, minimumLength int) bool {
+	closingChar, length, info, ok := docFence(line)
+	return ok && closingChar == char && length >= minimumLength && info == ""
+}
+
+func closesOuterFence(line string, char byte, minimumLength, minimumIndent int) bool {
+	indent := leadingSpaces(line)
+	if indent < minimumIndent || indent > minimumIndent+3 || indent >= len(line) {
+		return false
+	}
+	closingChar, length, info, ok := docFence(line[indent:])
+	return ok && closingChar == char && length >= minimumLength && info == ""
+}
+
+func leadingSpaces(line string) int {
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' {
+		indent++
+	}
+	return indent
+}
+
+func docIndentedContent(line string) (string, bool) {
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' {
+		indent++
+	}
+	if indent > 3 {
+		return "", false
+	}
+	return line[indent:], true
 }
 
 func docFinding(ruleID, path string, line int, message string) model.Finding {
