@@ -107,6 +107,12 @@ func TestActionUsesPortableWorkspaceSafeDownloadSteps(t *testing.T) {
 	if !strings.Contains(actionText, `bash "$GITHUB_ACTION_PATH/scripts/action-entrypoint.sh"`) {
 		t.Fatal("Unix composite step does not delegate to the tested action entrypoint")
 	}
+	if strings.Contains(actionText, "DEVPARITY_RELEASE_BASE") {
+		t.Fatal("composite action must not expose a release-base environment override")
+	}
+	if !strings.Contains(actionText, "run: |\n        bash \"$GITHUB_ACTION_PATH/scripts/action-entrypoint.sh\"\n") {
+		t.Fatal("Unix composite step must invoke the entrypoint without positional arguments")
+	}
 	for _, required := range []string{
 		"runner.os != 'Windows'",
 		"runner.os == 'Windows'",
