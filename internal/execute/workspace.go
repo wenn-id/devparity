@@ -52,16 +52,20 @@ func CopyWorkspaceWithContext(ctx context.Context, root string, limits Workspace
 	if err := checkWorkspaceContext(ctx); err != nil {
 		return "", nil, err
 	}
-	target, err := os.MkdirTemp("", "devparity-workspace-")
+	parent, err := os.MkdirTemp("", "devparity-workspace-")
 	if err != nil {
 		return "", nil, err
 	}
-	cleanup := func() error { return os.RemoveAll(target) }
+	cleanup := func() error { return os.RemoveAll(parent) }
 	fail := func(copyErr error) (string, func() error, error) {
 		if cleanupErr := cleanup(); cleanupErr != nil {
 			return "", nil, fmt.Errorf("%w; workspace cleanup failed: %v", copyErr, cleanupErr)
 		}
 		return "", nil, copyErr
+	}
+	target := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(target, workspaceDirectoryMode); err != nil {
+		return fail(err)
 	}
 	if err := os.Chmod(target, workspaceDirectoryMode); err != nil {
 		return fail(err)
