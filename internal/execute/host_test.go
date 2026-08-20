@@ -105,12 +105,12 @@ func TestRunHostUsesCapturedEnvironmentSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("DEVPARITY_TEST_SNAPSHOT", "before")
+	t.Setenv("DEVPARITY_TEST_SNAPSHOT", "before-42")
 	snapshot, err := SnapshotEnvironment([]string{"DEVPARITY_TEST_SNAPSHOT"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("DEVPARITY_TEST_SNAPSHOT", "after")
+	t.Setenv("DEVPARITY_TEST_SNAPSHOT", "after-42")
 	result, err := RunHost(context.Background(), grant, model.DocBlock{
 		ID:     "README.md:2",
 		Shell:  "sh",

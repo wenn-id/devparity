@@ -2,7 +2,6 @@ package execute
 
 import (
 	"regexp"
-	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -33,16 +32,16 @@ func shouldRedactForwardedValue(value string) bool {
 	if utf8.RuneCountInString(value) < minForwardedRedactionLength {
 		return false
 	}
-	switch strings.ToLower(value) {
-	case "true", "false", "test", "dev", "stable", "normal", "utc":
-		return false
-	}
+	hasLetter := false
+	hasNonLetter := false
 	for _, character := range value {
 		if unicode.IsLetter(character) {
-			return true
+			hasLetter = true
+		} else if !unicode.IsSpace(character) {
+			hasNonLetter = true
 		}
 	}
-	return false
+	return hasLetter && hasNonLetter
 }
 
 func (r Redactor) Redact(value string) string {

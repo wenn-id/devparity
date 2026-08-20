@@ -25,8 +25,8 @@ func TestRedactorRemovesForwardedAndKnownTokens(t *testing.T) {
 }
 
 func TestRedactorDoesNotCorruptLowEntropyForwardedValues(t *testing.T) {
-	r := NewRedactor([]string{"1", "1234567890", "18.20.1", "2026-08-20", "1.2.3", "ⅣⅣⅣⅣⅣⅣ", "true", "false", "test", "dev", "UTC", "stable", "normal"})
-	input := "node 18.20.1 installed in 12 seconds on 2026-08-20; env=test mode=dev zone=UTC channel=stable state=normal roman=ⅣⅣⅣⅣⅣⅣ"
+	r := NewRedactor([]string{"1", "1234567890", "18.20.1", "2026-08-20", "1.2.3", "ⅣⅣⅣⅣⅣⅣ", "true", "false", "test", "dev", "UTC", "stable", "normal", "ubuntu", "runner", "python"})
+	input := "node 18.20.1 installed in 12 seconds on 2026-08-20; env=test mode=dev zone=UTC channel=stable state=normal roman=ⅣⅣⅣⅣⅣⅣ host=ubuntu runner=runner lang=python"
 	if got := r.Redact(input); got != input {
 		t.Fatalf("low-entropy values corrupted output: got %q, want %q", got, input)
 	}
@@ -44,8 +44,13 @@ func TestForwardedRedactionEligibilityBoundary(t *testing.T) {
 		{value: "ⅣⅣⅣⅣⅣⅣ", want: false},
 		{value: "stable", want: false},
 		{value: "normal", want: false},
-		{value: "before", want: true},
+		{value: "ubuntu", want: false},
+		{value: "runner", want: false},
+		{value: "python", want: false},
+		{value: "ubuntu runner", want: false},
+		{value: "before", want: false},
 		{value: "abc123", want: true},
+		{value: "exact-secret", want: true},
 		{value: "s3cr3t-value-42", want: true},
 	} {
 		t.Run(test.value, func(t *testing.T) {
