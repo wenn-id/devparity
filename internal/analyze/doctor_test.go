@@ -37,6 +37,35 @@ func TestDoctorFindsDriftedNodeRepository(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsEachMissingDocumentationScriptOnce(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "repos", "drifted-node")
+	report, err := Doctor(root, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var missing []model.Finding
+	for _, finding := range report.Results {
+		if finding.RuleID == "missing-package-script" && finding.Status == model.StatusFinding {
+			for _, evidence := range finding.Evidence {
+				if evidence.Subject == "missing" || evidence.Value == "missing" {
+					missing = append(missing, finding)
+					break
+				}
+			}
+		}
+	}
+	if len(missing) != 1 {
+		t.Fatalf("missing-package-script findings for missing=%d, want 1: %#v", len(missing), missing)
+	}
+	if len(missing[0].Evidence) != 1 || missing[0].Evidence[0].Kind != model.FactKind("doc.command") || missing[0].Evidence[0].Source.Path != "README.md" || missing[0].Evidence[0].Source.Line != 8 {
+		t.Fatalf("finding=%#v, want precise README.md:8 doc.command evidence", missing[0])
+	}
+	if report.Summary.Finding != 5 {
+		t.Fatalf("summary=%#v, want 5 logical findings", report.Summary)
+	}
+}
+
 func TestDoctorBunPackageRetainsScriptFacts(t *testing.T) {
 	root := t.TempDir()
 	writeAnalyzeFixture(t, root, "package.json", `{

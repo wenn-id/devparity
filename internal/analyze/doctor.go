@@ -43,7 +43,7 @@ func Doctor(root, toolVersion string) (model.Report, error) {
 	blocks, blockFindings := docs.Extract(artifacts.Root, artifacts.Markdown)
 	findings = append(findings, blockFindings...)
 	facts = append(facts, docCommandFacts(blocks)...)
-	findings = append(findings, docs.Validate(blocks, facts)...)
+	findings = append(findings, docsFindingsForDoctor(blocks, facts)...)
 	facts = append(facts, workflowPackageManagerFacts(workflowFacts)...)
 
 	findings = append(findings, rules.Evaluate(facts)...)
@@ -55,6 +55,18 @@ func Doctor(root, toolVersion string) (model.Report, error) {
 		Summary:       model.Summarize(findings),
 		Results:       findings,
 	}, nil
+}
+
+func docsFindingsForDoctor(blocks []model.DocBlock, facts []model.Fact) []model.Finding {
+	validated := docs.Validate(blocks, facts)
+	findings := make([]model.Finding, 0, len(validated))
+	for _, finding := range validated {
+		if finding.RuleID == "missing-package-script" {
+			continue
+		}
+		findings = append(findings, finding)
+	}
+	return findings
 }
 
 func docCommandFacts(blocks []model.DocBlock) []model.Fact {
