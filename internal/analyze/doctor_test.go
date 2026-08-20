@@ -66,6 +66,20 @@ func TestDoctorReportsEachMissingDocumentationScriptOnce(t *testing.T) {
 	}
 }
 
+func TestDoctorDetectsNodeDriftFromFlaggedDockerImage(t *testing.T) {
+	root := t.TempDir()
+	writeAnalyzeFixture(t, root, "package.json", `{"engines":{"node":">=22"}}`)
+	writeAnalyzeFixture(t, root, "Dockerfile", "FROM --platform=linux/amd64 docker.io/library/node:18\n")
+
+	report, err := Doctor(root, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRule(report.Results, "node-version-conflict") {
+		t.Fatalf("missing Node version conflict in %#v", report.Results)
+	}
+}
+
 func TestDoctorBunPackageRetainsScriptFacts(t *testing.T) {
 	root := t.TempDir()
 	writeAnalyzeFixture(t, root, "package.json", `{
