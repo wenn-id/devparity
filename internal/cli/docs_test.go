@@ -127,6 +127,46 @@ func TestDocsExecutionSkipsUnsupportedCommands(t *testing.T) {
 	}
 }
 
+func TestDocsExecutionIgnoresMarkedBlocksInsideOuterFence(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		readme   string
+		wantLive bool
+	}{
+		{name: "top level", readme: "````markdown\n<!-- devparity:run -->\n```sh\nnpm test\n```\n````\n"},
+		{name: "list item", readme: "- ````markdown\n  <!-- devparity:run -->\n  ```sh\n  npm test\n  ```\n  ````\n"},
+		{name: "ordered list followed by live block", readme: "12. ````markdown\n    <!-- devparity:run -->\n    ```sh\n    npm test\n    ```\n    ````\n\n<!-- devparity:run -->\n```sh\nnpm test\n```\n", wantLive: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			marker := filepath.Join(root, "nested-example-ran")
+			writeCLIFile(t, root, "package.json", `{"scripts":{"test":"touch nested-example-ran"}}`)
+			writeCLIFile(t, root, "README.md", test.readme)
+
+			var stdout, stderr bytes.Buffer
+			code := Run([]string{"docs", "verify", root, "--execute", "--trust-repository"}, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+			}
+			if !test.wantLive && (strings.Contains(stdout.String(), "docs-command-") || strings.Contains(stdout.String(), "doc-script-validation")) {
+				t.Fatalf("nested example was treated as live documentation: stdout=%q", stdout.String())
+			}
+			if test.wantLive {
+				if strings.Count(stdout.String(), "docs-command-passed") != 1 || strings.Count(stdout.String(), "doc-script-validation") != 1 {
+					t.Fatalf("live block after list fence was not executed exactly once: stdout=%q", stdout.String())
+				}
+				if _, err := os.Stat(marker); err != nil {
+					t.Fatalf("live documentation block did not run: %v", err)
+				}
+				return
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("nested documentation example ran: %v", err)
+			}
+		})
+	}
+}
+
 func TestDocsExecutionRunsSupportedBlocksAndSkipsUnsupportedBlocks(t *testing.T) {
 	root := t.TempDir()
 	unsupportedMarker := filepath.Join(root, "unsupported-ran")
