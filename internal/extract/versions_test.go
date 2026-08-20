@@ -90,8 +90,38 @@ func TestDockerfile(t *testing.T) {
 			wantValue: "22",
 		},
 		{
+			name:      "skips leading flags",
+			contents:  "FROM --platform=linux/amd64 node:18\n",
+			wantValue: "18",
+		},
+		{
+			name:      "strips Docker Hub registry prefix",
+			contents:  "FROM docker.io/library/node:20\n",
+			wantValue: "20",
+		},
+		{
+			name:      "strips arbitrary registry namespace",
+			contents:  "FROM public.ecr.aws/docker/library/node:21-bookworm\n",
+			wantValue: "21",
+		},
+		{
 			name:        "variable is inconclusive",
 			contents:    "FROM node:${NODE_VERSION}\n",
+			wantFinding: true,
+		},
+		{
+			name:        "unclassified image is inconclusive",
+			contents:    "FROM alpine:3.20\n",
+			wantFinding: true,
+		},
+		{
+			name:        "scratch image is inconclusive",
+			contents:    "FROM scratch\n",
+			wantFinding: true,
+		},
+		{
+			name:        "missing image after flags is inconclusive",
+			contents:    "FROM --platform=linux/amd64\n",
 			wantFinding: true,
 		},
 	}

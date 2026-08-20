@@ -55,14 +55,23 @@ func Dockerfile(root, path string) ([]model.Fact, []model.Finding) {
 	var findings []model.Finding
 	for lineNumber, line := range splitLines(data) {
 		fields := strings.Fields(line)
-		if len(fields) < 2 || !strings.EqualFold(fields[0], "FROM") {
+		if len(fields) == 0 || !strings.EqualFold(fields[0], "FROM") {
 			continue
 		}
-		image := fields[1]
-		if len(image) < len("node:") || !strings.EqualFold(image[:len("node:")], "node:") {
+		image, ok := dockerFromImage(fields)
+		if !ok {
+			findings = append(findings, nodeVersionFinding(path, lineNumber+1, "FROM instruction has no image reference"))
 			continue
 		}
-		tag := image[len("node:"):]
+		imageName := image
+		if slash := strings.LastIndexByte(imageName, '/'); slash >= 0 {
+			imageName = imageName[slash+1:]
+		}
+		if len(imageName) < len("node:") || !strings.EqualFold(imageName[:len("node:")], "node:") {
+			findings = append(findings, nodeVersionFinding(path, lineNumber+1, fmt.Sprintf("unsupported Node image reference %q", image)))
+			continue
+		}
+		tag := imageName[len("node:"):]
 		if tag == "" || strings.Contains(tag, "$") {
 			findings = append(findings, nodeVersionFinding(path, lineNumber+1, fmt.Sprintf("unsupported Node image tag %q", tag)))
 			continue
@@ -75,6 +84,15 @@ func Dockerfile(root, path string) ([]model.Fact, []model.Finding) {
 		facts = append(facts, nodeConstraint(path, lineNumber+1, strings.TrimPrefix(strings.TrimPrefix(tag, "v"), "V")))
 	}
 	return facts, findings
+}
+
+func dockerFromImage(fields []string) (string, bool) {
+	for index := 1; index < len(fields); index++ {
+		if !strings.HasPrefix(fields[index], "--") {
+			return fields[index], true
+		}
+	}
+	return "", false
 }
 
 func oneVersionLine(data []byte) (string, int, bool) {
