@@ -100,6 +100,23 @@ func TestPackageJSONReportsMalformedAndUnsupportedManager(t *testing.T) {
 	}
 }
 
+func TestPackageJSONUnsupportedBunStillExtractsEngineAndScripts(t *testing.T) {
+	root := t.TempDir()
+	writePackageFixture(t, root, "package.json", `{
+  "engines": {"node": ">=20 <23"},
+  "packageManager": "bun@1.1.0",
+  "scripts": {"test": "bun test", "build": "tsc"}
+}`)
+
+	facts, findings := PackageJSON(root, "package.json")
+	if len(findings) != 1 || findings[0].RuleID != "package-manager-unsupported" || findings[0].Status != model.StatusInconclusive {
+		t.Fatalf("findings=%#v", findings)
+	}
+	assertFact(t, facts, "node.constraint", "node", ">=20 <23", "engines.node", 2)
+	assertFact(t, facts, "package.script", "test", "bun test", "scripts.test", 4)
+	assertFact(t, facts, "package.script", "build", "tsc", "scripts.build", 4)
+}
+
 func TestLockfilesExtractPackageManagerFacts(t *testing.T) {
 	facts := Lockfiles([]string{
 		"yarn.lock",

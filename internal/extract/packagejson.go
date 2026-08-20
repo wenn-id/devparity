@@ -45,6 +45,7 @@ func PackageJSON(root, path string) ([]model.Fact, []model.Finding) {
 	}
 
 	facts := make([]model.Fact, 0, 2+len(packageData.Scripts))
+	var findings []model.Finding
 	if packageData.Engines.Node != "" {
 		facts = append(facts, model.Fact{
 			Kind:    model.FactKind("node.constraint"),
@@ -57,7 +58,7 @@ func PackageJSON(root, path string) ([]model.Fact, []model.Finding) {
 		manager := packageManagerName(packageData.PackageManager)
 		field := "packageManager"
 		if manager == "bun" {
-			return facts, []model.Finding{unsupportedManagerFinding(path, lines[field], packageData.PackageManager)}
+			findings = append(findings, unsupportedManagerFinding(path, lines[field], packageData.PackageManager))
 		}
 		if manager == "npm" || manager == "pnpm" || manager == "yarn" {
 			facts = append(facts, model.Fact{
@@ -84,7 +85,7 @@ func PackageJSON(root, path string) ([]model.Fact, []model.Finding) {
 			Source:  source(path, lines[field], field),
 		})
 	}
-	return facts, nil
+	return facts, findings
 }
 
 func Lockfiles(paths []string) []model.Fact {
