@@ -37,6 +37,26 @@ func TestDoctorFindsDriftedNodeRepository(t *testing.T) {
 	}
 }
 
+func TestDoctorBunPackageRetainsScriptFacts(t *testing.T) {
+	root := t.TempDir()
+	writeAnalyzeFixture(t, root, "package.json", `{
+  "packageManager": "bun@1.1.0",
+  "scripts": {"test": "bun test", "build": "tsc"}
+}`)
+	writeAnalyzeFixture(t, root, "README.md", "<!-- devparity:run -->\n```sh\nnpm run build\n```\n")
+
+	report, err := Doctor(root, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRuleWithStatus(report.Results, "package-manager-unsupported", model.StatusInconclusive) {
+		t.Fatalf("missing unsupported-manager finding in %#v", report.Results)
+	}
+	if hasRule(report.Results, "missing-package-script") {
+		t.Fatalf("Bun package scripts were reported missing: %#v", report.Results)
+	}
+}
+
 func TestDoctorCleanRepositoryHasNoFindingStatus(t *testing.T) {
 	root := t.TempDir()
 	writeAnalyzeFixture(t, root, "package.json", `{"engines":{"node":">=20 <23"},"scripts":{"test":"node --test"}}`)
@@ -66,8 +86,12 @@ func TestDocCommandFactsUseScriptLineNumbers(t *testing.T) {
 }
 
 func hasRule(findings []model.Finding, rule string) bool {
+	return hasRuleWithStatus(findings, rule, model.StatusFinding)
+}
+
+func hasRuleWithStatus(findings []model.Finding, rule string, status model.Status) bool {
 	for _, finding := range findings {
-		if finding.RuleID == rule && finding.Status == model.StatusFinding {
+		if finding.RuleID == rule && finding.Status == status {
 			return true
 		}
 	}
