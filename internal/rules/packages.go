@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/wenn-id/devparity/internal/model"
+	"github.com/wenn-id/devparity/internal/nodecmd"
 )
 
 func evaluatePackageManager(facts []model.Fact) model.Finding {
@@ -39,7 +40,11 @@ func evaluateMissingScripts(facts []model.Fact) []model.Finding {
 		if fact.Kind != model.FactKind("doc.command") && fact.Kind != model.FactKind("workflow.command") {
 			continue
 		}
-		if fact.Subject == "" || fact.Subject == "install" || fact.Subject == "ci" {
+		if fact.Subject == "" {
+			continue
+		}
+		command, parsed := nodecmd.Parse(fact.Value)
+		if parsed && (command.Operation == "install" || command.Operation == "builtin") {
 			continue
 		}
 		if _, ok := available[fact.Subject]; !ok {

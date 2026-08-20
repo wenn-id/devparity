@@ -100,6 +100,52 @@ func TestDoctorBunPackageRetainsScriptFacts(t *testing.T) {
 	}
 }
 
+func TestDoctorInstallAliasesDoNotInventMissingScripts(t *testing.T) {
+	root := t.TempDir()
+	writeAnalyzeFixture(t, root, "package.json", `{"packageManager":"pnpm@10.0.0","scripts":{"build":"tsc"}}`)
+	writeAnalyzeFixture(t, root, "README.md", "<!-- devparity:run -->\n```sh\n# install dependencies\nnpm install\npnpm i\nyarn\npnpm run build\n```\n")
+	writeAnalyzeFixture(t, root, ".github/workflows/ci.yml", "jobs:\n  test:\n    steps:\n      - run: pnpm i\n      - run: pnpm run build\n")
+
+	report, err := Doctor(root, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasRule(report.Results, "missing-package-script") {
+		t.Fatalf("install aliases invented missing scripts: %#v", report.Results)
+	}
+	if hasRuleWithStatus(report.Results, "doc-command-unsupported", model.StatusInconclusive) {
+		t.Fatalf("comments or install aliases made docs inconclusive: %#v", report.Results)
+	}
+}
+
+func TestDoctorBuiltinsPreservePackageManagerEvidenceWithoutMissingScripts(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		path  string
+		value string
+	}{
+		{name: "documentation", path: "README.md", value: "<!-- devparity:run -->\n```sh\nyarn publish\n```\n"},
+		{name: "workflow", path: ".github/workflows/ci.yml", value: "jobs:\n  test:\n    steps:\n      - run: yarn version\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeAnalyzeFixture(t, root, "package.json", `{"packageManager":"pnpm@10.0.0"}`)
+			writeAnalyzeFixture(t, root, test.path, test.value)
+
+			report, err := Doctor(root, "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hasRule(report.Results, "package-manager-conflict") {
+				t.Fatalf("builtin command lost package-manager evidence: %#v", report.Results)
+			}
+			if hasRule(report.Results, "missing-package-script") {
+				t.Fatalf("builtin command invented missing scripts: %#v", report.Results)
+			}
+		})
+	}
+}
+
 func TestDoctorCleanRepositoryHasNoFindingStatus(t *testing.T) {
 	root := t.TempDir()
 	writeAnalyzeFixture(t, root, "package.json", `{"engines":{"node":">=20 <23"},"scripts":{"test":"node --test"}}`)

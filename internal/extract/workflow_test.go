@@ -258,16 +258,41 @@ func TestWorkflowReportsOnlyMalformedNodeLikeRunSteps(t *testing.T) {
 `)
 
 	facts, findings := Workflows(root, []string{"node-like.yml"})
-	if len(facts) != 0 {
-		t.Fatalf("facts=%#v, want no parsed facts", facts)
+	if len(facts) != 1 {
+		t.Fatalf("facts=%#v, want npm install fact", facts)
 	}
-	if len(findings) != 4 {
-		t.Fatalf("findings=%#v, want four Node-like inconclusive findings", findings)
+	assertWorkflowFact(t, facts, "workflow.command", "npm install", "node-like.yml", 4)
+	if facts[0].Subject != "install" {
+		t.Fatalf("fact=%#v, want install subject", facts[0])
+	}
+	if len(findings) != 3 {
+		t.Fatalf("findings=%#v, want three Node-like inconclusive findings", findings)
 	}
 	for _, finding := range findings {
 		if finding.RuleID != "workflow-unsupported" || finding.Status != model.StatusInconclusive {
 			t.Fatalf("finding=%#v, want workflow-unsupported inconclusive", finding)
 		}
+	}
+}
+
+func TestWorkflowDoesNotTreatPackageManagerBuiltinsAsScripts(t *testing.T) {
+	root := t.TempDir()
+	writeWorkflowFixture(t, root, "builtins.yml", `jobs:
+  verify:
+    steps:
+      - run: pnpm update
+      - run: pnpm list
+      - run: yarn remove
+      - run: pnpm run build
+`)
+
+	facts, findings := Workflows(root, []string{"builtins.yml"})
+	if len(facts) != 4 {
+		t.Fatalf("facts=%#v, want three builtin facts and one shorthand script fact", facts)
+	}
+	assertWorkflowFact(t, facts, "workflow.command", "pnpm run build", "builtins.yml", 7)
+	if len(findings) != 0 {
+		t.Fatalf("findings=%#v, want no findings for recognized builtins", findings)
 	}
 }
 

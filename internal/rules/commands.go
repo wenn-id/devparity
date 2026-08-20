@@ -24,6 +24,9 @@ func evaluateWorkflowDrift(facts []model.Fact) model.Finding {
 			}
 			seenDocs[fact] = struct{}{}
 			class := commandClass(fact)
+			if class == "builtin" {
+				continue
+			}
 			docs[class] = append(docs[class], fact)
 		case model.FactKind("workflow.command"):
 			if _, exists := seenWorkflows[fact]; exists {
@@ -31,6 +34,9 @@ func evaluateWorkflowDrift(facts []model.Fact) model.Finding {
 			}
 			seenWorkflows[fact] = struct{}{}
 			class := commandClass(fact)
+			if class == "builtin" {
+				continue
+			}
 			workflows[class] = append(workflows[class], fact)
 		}
 	}
