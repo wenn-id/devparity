@@ -1,0 +1,66 @@
+# Composite-action entrypoint for Windows runners.
+#
+# Mirrors scripts/action-entrypoint.sh: downloads the pinned release asset,
+# verifies its checksums.txt manifest, and runs `doctor --format github`.
+# Extracted from action.yml so the release smoke test can exercise the exact
+# download-and-verify logic against a local file:// release directory before
+# any tag is published. The shipped action passes no arguments, so its base
+# URL is always the public release download location. Tests may pass a local
+# release base as the first positional argument.
+#
+# Environment:
+#   RUNNER_OS            (required) "Windows"
+#   RUNNER_ARCH          (required) e.g. X64
+#   RUNNER_TEMP          (required) runner temp directory
+#   DEVPARITY_VERSION    (required) release tag, e.g. v0.1.0-beta.1
+#   DEVPARITY_STRICT     (required) "true" to fail when drift is found
+#   GITHUB_STEP_SUMMARY  (required) doctor step summary output path
+#   GITHUB_WORKSPACE     (required) target repository to run doctor against
+
+param(
+  [string]$ReleaseBaseUrl = "https://github.com/wenn-id/devparity/releases/download/$env:DEVPARITY_VERSION"
+)
+
+$ErrorActionPreference = 'Stop'
+
+switch ("$env:RUNNER_OS-$env:RUNNER_ARCH") {
+  'Windows-X64' { $asset = 'devparity-windows-amd64.exe'; break }
+  default { throw "unsupported runner $env:RUNNER_OS-$env:RUNNER_ARCH" }
+}
+
+if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) { throw 'RUNNER_TEMP is not set' }
+$workDir = Join-Path $env:RUNNER_TEMP ("devparity-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+
+try {
+  $binary = Join-Path $workDir $asset
+  $checksums = Join-Path $workDir 'checksums.txt'
+  Invoke-WebRequest -UseBasicParsing -Uri "$ReleaseBaseUrl/$asset" -OutFile $binary
+  Invoke-WebRequest -UseBasicParsing -Uri "$ReleaseBaseUrl/checksums.txt" -OutFile $checksums
+
+  # Shared checksum contract with the bash entrypoint: whitespace-separated
+  # hash followed by the asset basename. Parse deterministically so trailing
+  # CR/LF or a CRLF manifest does not affect matching.
+  $checksumLine = $null
+  foreach ($line in Get-Content -LiteralPath $checksums) {
+    $parts = $line.Split([char[]]' ', [System.StringSplitOptions]::RemoveEmptyEntries)
+    if ($parts.Count -ge 2 -and $parts[1] -eq $asset) { $checksumLine = $parts[0]; break }
+  }
+  if (-not $checksumLine) { throw "checksum entry missing for $asset" }
+  # Strip any non-hex characters (BOM, CR, NUL, etc.) before comparing.
+  $expected = ($checksumLine -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+  $actual = ((Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+  if ($actual -ne $expected) { throw "checksum mismatch for $asset (expected=$expected actual=$actual)" }
+
+  $arguments = @('doctor', '--format', 'github')
+  if ($env:DEVPARITY_STRICT -eq 'true') { $arguments += '--strict' }
+  Push-Location $env:GITHUB_WORKSPACE
+  try {
+    & $binary @arguments
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  } finally {
+    Pop-Location
+  }
+} finally {
+  Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+}
