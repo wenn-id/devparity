@@ -53,6 +53,37 @@ func TestDoctorJSONUsesSchemaOne(t *testing.T) {
 	}
 }
 
+func TestDoctorAndDocsVerifyReportTheSameRepositoryPath(t *testing.T) {
+	// The two subcommands must normalise path separators identically at the
+	// reporting boundary so JSON consumers never see both "a/b" and "a\b"
+	// for the same repository.
+	clean := filepath.Join("..", "..", "testdata", "repos", "clean-node")
+
+	var doctorOut, docsOut bytes.Buffer
+	var stderr bytes.Buffer
+	if code := Run([]string{"doctor", "--format", "json", clean}, &doctorOut, &stderr); code != 0 {
+		t.Fatalf("doctor code=%d stderr=%q", code, stderr.String())
+	}
+	stderr.Reset()
+	if code := Run([]string{"docs", "verify", "--format", "json", clean}, &docsOut, &stderr); code != 0 {
+		t.Fatalf("docs verify code=%d stderr=%q", code, stderr.String())
+	}
+
+	var doctorReport, docsReport model.Report
+	if err := json.Unmarshal(doctorOut.Bytes(), &doctorReport); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(docsOut.Bytes(), &docsReport); err != nil {
+		t.Fatal(err)
+	}
+	if doctorReport.Repository != docsReport.Repository {
+		t.Fatalf("doctor repository=%q, docs verify repository=%q; want identical", doctorReport.Repository, docsReport.Repository)
+	}
+	if strings.Contains(doctorReport.Repository, "\\") {
+		t.Fatalf("repository=%q, want forward slashes in the report", doctorReport.Repository)
+	}
+}
+
 func TestDoctorGitHubWritesStepSummary(t *testing.T) {
 	clean := filepath.Join("..", "..", "testdata", "repos", "clean-node")
 	summary := filepath.Join(t.TempDir(), "summary.md")
