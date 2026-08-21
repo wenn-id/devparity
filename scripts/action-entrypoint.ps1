@@ -49,7 +49,7 @@ try {
   if (-not $checksumLine) { throw "checksum entry missing for $asset" }
   $expected = $checksumLine.ToUpperInvariant()
   $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash.ToUpperInvariant()
-  if ($actual -ne $expected) { throw "checksum mismatch for $asset" }
+  if ($actual -ne $expected) { throw "checksum mismatch for $asset (expected=$expected actual=$actual)" }
 
   $arguments = @('doctor', '--format', 'github')
   if ($env:DEVPARITY_STRICT -eq 'true') { $arguments += '--strict' }
