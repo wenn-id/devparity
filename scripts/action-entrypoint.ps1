@@ -9,13 +9,13 @@
 # release base as the first positional argument.
 #
 # Environment:
-#   RUNNER_OS        (required) "Windows"
-#   RUNNER_ARCH      (required) e.g. X64
-#   RUNNER_TEMP      (required) runner temp directory
-#   DEVPARITY_VERSION (required) release tag, e.g. v0.1.0-beta.1
-#   DEVPARITY_STRICT (required) "true" to fail when drift is found
-#   GITHUB_STEP_SUMMARY (required) doctor step summary output path
-#   GITHUB_WORKSPACE  (required) target repository to run doctor against
+#   RUNNER_OS            (required) "Windows"
+#   RUNNER_ARCH          (required) e.g. X64
+#   RUNNER_TEMP          (required) runner temp directory
+#   DEVPARITY_VERSION    (required) release tag, e.g. v0.1.0-beta.1
+#   DEVPARITY_STRICT     (required) "true" to fail when drift is found
+#   GITHUB_STEP_SUMMARY  (required) doctor step summary output path
+#   GITHUB_WORKSPACE     (required) target repository to run doctor against
 
 param(
   [string]$ReleaseBaseUrl = "https://github.com/wenn-id/devparity/releases/download/$env:DEVPARITY_VERSION"
@@ -38,8 +38,9 @@ try {
   Invoke-WebRequest -UseBasicParsing -Uri "$ReleaseBaseUrl/$asset" -OutFile $binary
   Invoke-WebRequest -UseBasicParsing -Uri "$ReleaseBaseUrl/checksums.txt" -OutFile $checksums
 
-  # Shared checksum contract with the bash entrypoint: exactly two spaces
-  # before the asset basename, then end-of-line (optionally CRLF).
+  # Shared checksum contract with the bash entrypoint: 64 hex chars, two
+  # spaces, the asset basename, then end-of-line. Accept an optional CR so a
+  # CRLF checksums.txt still matches.
   $checksumLine = Get-Content -LiteralPath $checksums |
     Where-Object { $_ -match ('^([0-9a-fA-F]{64})  ' + [regex]::Escape($asset) + '\r?$') } |
     Select-Object -First 1
