@@ -22,38 +22,68 @@ var (
 	containerRuntimeProbeTimeout             = 10 * time.Second
 )
 
-// probeCache memoises the two container runtime probes for the lifetime of
-// the process. A README with N marked blocks would otherwise spawn 2N probe
-// processes (docker info is not fast) inside the user's --timeout budget.
+// containerProbeCache memoises the two container runtime probes for the
+// lifetime of the process. A README with N marked blocks would otherwise
+// spawn 2N probe processes (docker info is not fast) inside the user's
+// --timeout budget.
+//
+// Only successful probes are cached. A failed or canceled probe stays
+// uncached so a transient daemon outage (or a canceled first context) does
+// not permanently skip every later block in the same process.
 type containerProbeCache struct {
-	once       sync.Once
-	runtime    string
-	runtimeErr error
-	pidsOnce   sync.Once
-	pidsOK     bool
-	pidsErr    error
+	mu sync.Mutex
+	// runtime is the probed runtime name, empty until a probe succeeds.
+	runtime string
+	// pidsRuntime records which runtime pidsOK belongs to, so a different
+	// runtime is probed again instead of reusing an unrelated result.
+	pidsRuntime string
+	pidsKnown   bool
+	pidsOK      bool
 }
 
 var probes containerProbeCache
 
 func resetContainerProbeCache() {
-	probes = containerProbeCache{}
+	probes.mu.Lock()
+	defer probes.mu.Unlock()
+	probes.runtime = ""
+	probes.pidsRuntime = ""
+	probes.pidsKnown = false
+	probes.pidsOK = false
 }
 
-// cachedRuntimeProbe runs probeContainerRuntime at most once per process.
+// cachedRuntimeProbe runs probeContainerRuntime at most once per process
+// after it succeeds; failures are retried on the next call.
 func cachedRuntimeProbe(ctx context.Context) (string, error) {
-	probes.once.Do(func() {
-		probes.runtime, probes.runtimeErr = probeContainerRuntime(ctx)
-	})
-	return probes.runtime, probes.runtimeErr
+	probes.mu.Lock()
+	defer probes.mu.Unlock()
+	if probes.runtime != "" {
+		return probes.runtime, nil
+	}
+	runtimeName, err := probeContainerRuntime(ctx)
+	if err != nil {
+		return "", err
+	}
+	probes.runtime = runtimeName
+	return runtimeName, nil
 }
 
-// cachedPidsLimitProbe runs probePidsLimitSupport at most once per process.
+// cachedPidsLimitProbe runs probePidsLimitSupport at most once per process
+// per runtime after it succeeds; failures are retried on the next call.
 func cachedPidsLimitProbe(ctx context.Context, runtimeName string, maxOutput int64) (bool, error) {
-	probes.pidsOnce.Do(func() {
-		probes.pidsOK, probes.pidsErr = probePidsLimitSupport(ctx, runtimeName, maxOutput)
-	})
-	return probes.pidsOK, probes.pidsErr
+	probes.mu.Lock()
+	defer probes.mu.Unlock()
+	if probes.pidsKnown && probes.pidsRuntime == runtimeName {
+		return probes.pidsOK, nil
+	}
+	supported, err := probePidsLimitSupport(ctx, runtimeName, maxOutput)
+	if err != nil {
+		return false, err
+	}
+	probes.pidsRuntime = runtimeName
+	probes.pidsKnown = true
+	probes.pidsOK = supported
+	return supported, nil
 }
 
 func probeContainerRuntime(ctx context.Context) (string, error) {

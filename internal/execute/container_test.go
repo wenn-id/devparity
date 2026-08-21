@@ -149,6 +149,84 @@ func TestRunContainerCachesRuntimeAndPidsProbes(t *testing.T) {
 	}
 }
 
+func TestRunContainerRetriesProbesAfterTransientFailure(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" {
+			return "/fake/docker", nil
+		}
+		return "", errors.New("not found")
+	}
+	var infoCalls, helpCalls, scriptCalls int
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 1 && args[0] == "info" {
+			infoCalls++
+			if infoCalls == 1 {
+				// Transient daemon outage on the first block.
+				return nil, []byte("daemon unavailable"), 1, nil
+			}
+			return nil, nil, 0, nil
+		}
+		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
+			helpCalls++
+			if helpCalls == 1 {
+				// Transient capability-probe failure on the first attempt.
+				return nil, []byte("temporary failure"), 1, nil
+			}
+			return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+		}
+		switch args[0] {
+		case "run":
+			scriptCalls++
+			return []byte("ok"), nil, 0, nil
+		case "rm":
+			return nil, nil, 0, nil
+		default:
+			return nil, nil, -1, errors.New("unexpected command")
+		}
+	}
+	block := model.DocBlock{ID: "README.md:2", Shell: "sh", Script: "true"}
+	options := Options{Root: t.TempDir(), NodeVersion: "22"}
+
+	// First block: runtime probe fails, result is skipped, nothing cached.
+	first, err := RunContainer(context.Background(), NewContainerGrant(), block, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Status != model.StatusSkipped {
+		t.Fatalf("first result=%#v, want skipped", first)
+	}
+
+	// Second block: runtime probe succeeds, pids probe fails transiently.
+	second, err := RunContainer(context.Background(), NewContainerGrant(), block, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Status != model.StatusFinding {
+		t.Fatalf("second result=%#v, want finding from pids probe failure", second)
+	}
+
+	// Third block: both probes succeed and the user script finally runs.
+	third, err := RunContainer(context.Background(), NewContainerGrant(), block, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Status != model.StatusPass {
+		t.Fatalf("third result=%#v, want pass after probes recover", third)
+	}
+	if scriptCalls != 1 {
+		t.Fatalf("scriptCalls=%d, want 1", scriptCalls)
+	}
+	if infoCalls != 2 {
+		t.Fatalf("infoCalls=%d, want 2 (failed probe retried, success cached)", infoCalls)
+	}
+	if helpCalls != 2 {
+		t.Fatalf("helpCalls=%d, want 2 (failed probe retried, success cached)", helpCalls)
+	}
+}
+
 func TestRunContainerTimeoutStartsAfterSetup(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
 	resetContainerProbeCache()
