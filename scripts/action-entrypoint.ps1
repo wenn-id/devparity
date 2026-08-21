@@ -43,9 +43,7 @@ try {
   # CR/LF or a CRLF manifest does not affect matching.
   $checksumLine = $null
   foreach ($line in Get-Content -LiteralPath $checksums) {
-    Write-Host "DEBUG manifest line: [$line]"
     $parts = $line.Split([char[]]' ', [System.StringSplitOptions]::RemoveEmptyEntries)
-    Write-Host "DEBUG parts: $($parts -join '|')"
     if ($parts.Count -ge 2 -and $parts[1] -eq $asset) { $checksumLine = $parts[0]; break }
   }
   if (-not $checksumLine) { throw "checksum entry missing for $asset" }

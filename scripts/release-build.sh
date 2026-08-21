@@ -55,4 +55,9 @@ esac
 test "$("${DEST}/${native_asset}" version)" = "$VERSION"
 
 # Generate a basename checksum manifest that the composite action verifies.
-(cd "$DEST" && sha256sum "${assets[@]}" > checksums.txt)
+# Emit "<hash>  <basename>" regardless of how sha256sum prefixes binary files
+# ("*name" on some coreutils), so both entrypoints match consistently.
+: > "$DEST/checksums.txt"
+for asset in "${assets[@]}"; do
+  printf '%s  %s\n' "$(sha256sum "$DEST/$asset" | awk '{print $1}')" "$asset" >> "$DEST/checksums.txt"
+done

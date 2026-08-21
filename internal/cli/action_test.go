@@ -328,7 +328,7 @@ func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
 		`native_arch="$(go env GOARCH)"`,
 		`native_asset="devparity-${native_os}-${native_arch}"`,
 		`test "$("${DEST}/${native_asset}" version)" = "$VERSION"`,
-		`(cd "$DEST" && sha256sum "${assets[@]}" > checksums.txt)`,
+		`printf '%s  %s\n' "$(sha256sum "$DEST/$asset" | awk '{print $1}')" "$asset"`,
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("release builder missing %q", required)
@@ -383,7 +383,7 @@ func TestReleaseChecksumsUseBasenames(t *testing.T) {
 	smokeText := read("..", "..", "scripts", "release-smoke.sh")
 	verifyText := read("..", "..", ".github", "workflows", "verify.yml")
 
-	const manifestCommand = `(cd "$DEST" && sha256sum "${assets[@]}" > checksums.txt)`
+	const manifestCommand = `printf '%s  %s\n' "$(sha256sum "$DEST/$asset" | awk '{print $1}')" "$asset"`
 	const bashVerifyPattern = `^[0-9a-fA-F]{64}  ${asset}$`
 	if !strings.Contains(buildText, manifestCommand) {
 		t.Fatalf("release builder does not generate basename checksums with %q", manifestCommand)
