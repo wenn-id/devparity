@@ -52,6 +52,15 @@ try {
   $actual = ((Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
   if ($actual -ne $expected) { throw "checksum mismatch for $asset (expected=$expected actual=$actual)" }
 
+  # Production releases must carry GitHub artifact provenance. Local/test
+  # bases (file:// or override) skip this because they have no attestations.
+  $publicBase = "https://github.com/wenn-id/devparity/releases/download/$env:DEVPARITY_VERSION"
+  if ($ReleaseBaseUrl -eq $publicBase) {
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'GitHub CLI is required to verify release provenance' }
+    & gh attestation verify $binary --repo wenn-id/devparity | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "provenance verification failed for $asset" }
+  }
+
   $arguments = @('doctor', '--format', 'github')
   if ($env:DEVPARITY_STRICT -eq 'true') { $arguments += '--strict' }
   Push-Location $env:GITHUB_WORKSPACE

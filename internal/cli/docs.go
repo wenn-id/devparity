@@ -35,6 +35,7 @@ func runDocs(args []string, stdout, stderr io.Writer) int {
 	containerMode := set.Bool("container", false, "execute marked documentation in a container")
 	allowNetwork := set.Bool("allow-network", false, "allow container network access")
 	nodeVersion := set.String("node-version", "", "container Node version")
+	nodeImageDigest := set.String("node-image-digest", "", "container Node image sha256 digest")
 	var envNames stringList
 	set.Var(&envNames, "env", "forward one environment variable")
 	timeout := set.Duration("timeout", 0, "execution timeout")
@@ -61,8 +62,16 @@ func runDocs(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "host execution requires both --execute and --trust-repository")
 		return 2
 	}
-	if (*allowNetwork || *nodeVersion != "") && !*containerMode {
-		fmt.Fprintln(stderr, "--allow-network and --node-version require --container")
+	if (*allowNetwork || *nodeVersion != "" || *nodeImageDigest != "") && !*containerMode {
+		fmt.Fprintln(stderr, "--allow-network, --node-version, and --node-image-digest require --container")
+		return 2
+	}
+	if *nodeVersion != "" && !concreteNodeVersionPattern.MatchString(*nodeVersion) {
+		fmt.Fprintf(stderr, "invalid --node-version %q: expected N, N.N, or N.N.N\n", *nodeVersion)
+		return 2
+	}
+	if *nodeImageDigest != "" && !nodeImageDigestPattern.MatchString(*nodeImageDigest) {
+		fmt.Fprintf(stderr, "invalid --node-image-digest %q: expected sha256 followed by 64 lowercase hexadecimal characters\n", *nodeImageDigest)
 		return 2
 	}
 	value, blocks, err := staticDocsData(path)
@@ -102,7 +111,7 @@ func runDocs(args []string, stdout, stderr io.Writer) int {
 			}
 			results := make([]model.ExecutionResult, 0, len(executableBlocks))
 			for _, block := range executableBlocks {
-				options := execute.Options{Root: value.Repository, Timeout: *timeout, EnvNames: envNames, Environment: &environment, AllowNetwork: *allowNetwork, NodeVersion: *nodeVersion}
+				options := execute.Options{Root: value.Repository, Timeout: *timeout, EnvNames: envNames, Environment: &environment, AllowNetwork: *allowNetwork, NodeVersion: *nodeVersion, NodeImageDigest: *nodeImageDigest}
 				var result model.ExecutionResult
 				var runErr error
 				if *containerMode {
@@ -146,6 +155,11 @@ func runDocs(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+var (
+	concreteNodeVersionPattern = regexp.MustCompile(`^\d+(?:\.\d+){0,2}$`)
+	nodeImageDigestPattern     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+)
+
 func concreteNodeVersion(root string) (string, error) {
 	artifacts, err := repository.Discover(root)
 	if err != nil {
@@ -155,10 +169,9 @@ func concreteNodeVersion(root string) (string, error) {
 	if hasRelevantNodeVersionFinding(findings) {
 		return "", fmt.Errorf("node version is inconclusive for container execution")
 	}
-	versionPattern := regexp.MustCompile(`^\d+(?:\.\d+){0,2}$`)
 	version := ""
 	for _, fact := range facts {
-		if !versionPattern.MatchString(fact.Value) {
+		if !concreteNodeVersionPattern.MatchString(fact.Value) {
 			continue
 		}
 		if version != "" && version != fact.Value {

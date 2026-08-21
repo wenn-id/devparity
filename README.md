@@ -19,6 +19,7 @@ DevParity is distributed as a single binary for Linux, macOS, and Windows. A tag
 - `devparity-darwin-amd64` and `devparity-darwin-arm64`
 - `devparity-windows-amd64.exe`
 - `checksums.txt`
+- `devparity.spdx.json` (SPDX SBOM)
 
 Download the binary for your runner from the matching [GitHub release](https://github.com/wenn-id/devparity/releases), download `checksums.txt` into the same directory, and verify it before running the program. On Linux:
 
@@ -45,7 +46,13 @@ if ($actual -ne $expected) { throw 'checksum mismatch' }
 .\devparity-windows-amd64.exe doctor .
 ```
 
-The release workflow and composite action use the same basename checksum manifest. If no tagged release is available yet, build from source with Go 1.26.5:
+The release workflow publishes signed GitHub build-provenance attestations for every release binary and an SPDX SBOM. Verify provenance in addition to the checksum:
+
+```sh
+gh attestation verify devparity-linux-amd64 --repo wenn-id/devparity
+```
+
+The composite action performs both checks automatically. If no tagged release is available yet, build from source with the Go toolchain declared in `go.mod`:
 
 ```sh
 go build -trimpath -o devparity ./cmd/devparity
@@ -88,9 +95,11 @@ Container execution copies the repository to a temporary workspace, excludes `.g
 ```sh
 devparity docs verify . --container --node-version 22
 devparity docs verify . --container --node-version 22 --allow-network
+devparity docs verify . --container --node-version 22 \
+  --node-image-digest sha256:<64-lowercase-hex-characters>
 ```
 
-Docker is preferred and Podman is the fallback. PowerShell container fences are skipped. A missing runtime is a skipped result; copy, launch, cleanup, or runtime errors are operational failures.
+`--node-version` accepts only `N`, `N.N`, or `N.N.N`. For reproducible runs, `--node-image-digest` pins the selected `node:<version>` image to an immutable SHA-256 digest. Docker is preferred and Podman is the fallback. PowerShell container fences are skipped. A missing runtime is a skipped result; copy, launch, cleanup, or runtime errors are operational failures.
 
 ## Exit codes and output
 
@@ -102,7 +111,7 @@ JSON output uses `schema_version: 1`. Findings sort by source path, line, and ru
 
 ## GitHub Action
 
-Use the composite action to run `doctor` and publish its GitHub job summary. The action supports Linux, macOS, and Windows hosted runners and downloads the pinned release asset for the runner architecture, verifies `checksums.txt`, and removes its temporary download directory when it finishes:
+Use the composite action to run `doctor` and publish its GitHub job summary. The action supports Linux, macOS, and Windows hosted runners and downloads the pinned release asset for the runner architecture, verifies both `checksums.txt` and its signed GitHub provenance, and removes its temporary download directory when it finishes:
 
 ```yaml
 steps:

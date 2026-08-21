@@ -17,6 +17,7 @@ runs:
       env:
         DEVPARITY_VERSION: ${{ inputs.version }}
         DEVPARITY_STRICT: ${{ inputs.strict }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         bash "$GITHUB_ACTION_PATH/scripts/action-entrypoint.sh"
 
@@ -25,5 +26,6 @@ runs:
       env:
         DEVPARITY_VERSION: ${{ inputs.version }}
         DEVPARITY_STRICT: ${{ inputs.strict }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         & "$env:GITHUB_ACTION_PATH\scripts\action-entrypoint.ps1"

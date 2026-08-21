@@ -38,10 +38,11 @@ var docsVerifyFlags = subcommandSpec{
 		"--allow-network":    true,
 	},
 	valueFlags: map[string]bool{
-		"--format":       true,
-		"--env":          true,
-		"--timeout":      true,
-		"--node-version": true,
+		"--format":            true,
+		"--env":               true,
+		"--timeout":           true,
+		"--node-version":      true,
+		"--node-image-digest": true,
 	},
 }
 

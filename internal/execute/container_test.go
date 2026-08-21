@@ -562,6 +562,14 @@ func TestBuildContainerArgsAlwaysIncludesPidsLimit(t *testing.T) {
 	}
 }
 
+func TestBuildContainerArgsPinsNodeImageDigest(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	args := buildContainerArgs("devparity-test", "/tmp/workspace", "22.4.1", "sh", []string{"-eu", "-c", "true"}, &EnvironmentSnapshot{}, Options{NodeImageDigest: digest})
+	if !containsArg(args, "node:22.4.1@"+digest) {
+		t.Fatalf("pinned image missing from args=%#v", args)
+	}
+}
+
 func TestContainerForwardsLowEntropyEnvironmentWithoutUsingItAsRedactionPattern(t *testing.T) {
 	environment := &EnvironmentSnapshot{forwarded: []string{"CI=1"}, secrets: []string{"1"}}
 	args := buildContainerArgs("devparity-test", "/tmp/workspace", "22", "sh", []string{"-eu", "-c", "true"}, environment, Options{})

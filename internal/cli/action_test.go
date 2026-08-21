@@ -375,6 +375,41 @@ func TestRepoGovernanceAndSecurityScanning(t *testing.T) {
 	}
 }
 
+func TestReleaseSupplyChainHardening(t *testing.T) {
+	read := func(path ...string) string {
+		data, err := os.ReadFile(filepath.Join(path...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
+	}
+	releaseText := read("..", "..", ".github", "workflows", "release.yml")
+	buildText := read("..", "..", "scripts", "release-build.sh")
+	entrypointText := read("..", "..", "scripts", "action-entrypoint.sh")
+	windowsEntrypointText := read("..", "..", "scripts", "action-entrypoint.ps1")
+
+	for _, required := range []string{
+		"id-token: write",
+		"attestations: write",
+		"actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8",
+		"anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b",
+		"output-file: dist/devparity.spdx.json",
+		"run: (cd dist && sha256sum -c checksums.txt)",
+	} {
+		if !strings.Contains(releaseText, required) {
+			t.Fatalf("release workflow missing %q", required)
+		}
+	}
+	if !strings.Contains(buildText, "go mod verify") {
+		t.Fatal("release builder does not verify downloaded modules")
+	}
+	for name, text := range map[string]string{"Unix action": entrypointText, "Windows action": windowsEntrypointText} {
+		if !strings.Contains(text, "gh attestation verify") || !strings.Contains(text, "--repo wenn-id/devparity") {
+			t.Fatalf("%s does not verify GitHub provenance", name)
+		}
+	}
+}
+
 type workflowStep struct {
 	Run  string `yaml:"run"`
 	If   string `yaml:"if"`

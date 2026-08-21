@@ -247,6 +247,32 @@ func TestDocsContainerModeCanSkipWhenRuntimeIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestDocsContainerRejectsInvalidNodeVersionBeforeRuntimeProbe(t *testing.T) {
+	clean := filepath.Join("..", "..", "testdata", "repos", "clean-node")
+	for _, version := range []string{"latest", "22-alpine", "22.1.2.3", "v22", "22@sha256:bad"} {
+		t.Run(version, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := Run([]string{"docs", "verify", clean, "--container", "--node-version", version}, &stdout, &stderr)
+			if code != 2 || !strings.Contains(stderr.String(), "invalid --node-version") {
+				t.Fatalf("version=%q code=%d stdout=%q stderr=%q", version, code, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+func TestDocsContainerValidatesNodeImageDigest(t *testing.T) {
+	clean := filepath.Join("..", "..", "testdata", "repos", "clean-node")
+	for _, digest := range []string{"sha256:bad", strings.Repeat("a", 64), "sha512:" + strings.Repeat("a", 64), "sha256:" + strings.Repeat("A", 64)} {
+		t.Run(digest, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := Run([]string{"docs", "verify", clean, "--container", "--node-version", "22", "--node-image-digest", digest}, &stdout, &stderr)
+			if code != 2 || !strings.Contains(stderr.String(), "invalid --node-image-digest") {
+				t.Fatalf("digest=%q code=%d stdout=%q stderr=%q", digest, code, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
 func treeHash(t *testing.T, root string) string {
 	t.Helper()
 	hash := sha256.New()

@@ -23,6 +23,8 @@ case "${RUNNER_OS}-${RUNNER_ARCH}" in
   macOS-ARM64) asset=devparity-darwin-arm64 ;;
   *) echo "unsupported runner" >&2; exit 2 ;;
 esac
+production_release=true
+if [[ $# -gt 0 ]]; then production_release=false; fi
 base="${1:-https://github.com/wenn-id/devparity/releases/download/${DEVPARITY_VERSION}}"
 workdir="$(mktemp -d "${RUNNER_TEMP%/}/devparity.XXXXXX")"
 trap 'rm -rf "$workdir"' EXIT
@@ -39,6 +41,13 @@ if [[ "${RUNNER_OS}" == "macOS" ]]; then
   printf '%s\n' "$checksum_line" | shasum -a 256 -c -
 else
   printf '%s\n' "$checksum_line" | sha256sum -c -
+fi
+if [[ "$production_release" == true ]]; then
+  command -v gh >/dev/null 2>&1 || {
+    echo "GitHub CLI is required to verify release provenance" >&2
+    exit 2
+  }
+  gh attestation verify "$workdir/$asset" --repo wenn-id/devparity >/dev/null
 fi
 chmod +x "$asset"
 args=(doctor --format github)
