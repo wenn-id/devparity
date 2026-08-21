@@ -84,8 +84,8 @@ func TestStaticSafetyCoversEveryStaticPackage(t *testing.T) {
 	// Packages intentionally outside the static path: they are allowed to
 	// spawn processes or use the network.
 	exempt := map[string]bool{
-		"cli":      true, // CLI layer: parses flags, wires execution
-		"execute":  true, // runs commands on host and in containers
+		"cli":     true, // CLI layer: parses flags, wires execution
+		"execute": true, // runs commands on host and in containers
 	}
 	guarded := make(map[string]bool, len(staticAnalysisPackages))
 	for _, packagePath := range staticAnalysisPackages {
