@@ -54,10 +54,6 @@ func runDocs(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "--execute and --container are mutually exclusive")
 		return 2
 	}
-	if *trustRepository && !*executeCommands {
-		fmt.Fprintln(stderr, "--trust-repository requires --execute")
-		return 2
-	}
 	if *executeCommands != *trustRepository {
 		fmt.Fprintln(stderr, "host execution requires both --execute and --trust-repository")
 		return 2
