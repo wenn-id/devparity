@@ -18,6 +18,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 mkdir -p "$DEST"
+go mod verify
 assets=()
 for target in \
   linux-amd64 linux-arm64 \

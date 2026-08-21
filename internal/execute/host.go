@@ -27,6 +27,9 @@ type Options struct {
 
 	AllowNetwork bool
 	NodeVersion  string
+	// NodeImageDigest optionally pins the Node image to an immutable digest.
+	// The value includes the sha256: algorithm prefix.
+	NodeImageDigest string
 }
 
 // EnvironmentSnapshot contains the exact values selected for forwarding and

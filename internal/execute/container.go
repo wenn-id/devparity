@@ -226,7 +226,11 @@ func buildContainerArgs(containerName, workspace, version, shell string, shellAr
 	for _, variable := range environment.forwarded {
 		args = append(args, "-e", variable)
 	}
-	args = append(args, "-v", workspace+":/workspace", "-w", "/workspace", "node:"+version)
+	image := "node:" + version
+	if opts.NodeImageDigest != "" {
+		image += "@" + opts.NodeImageDigest
+	}
+	args = append(args, "-v", workspace+":/workspace", "-w", "/workspace", image)
 	args = append(args, shell)
 	args = append(args, shellArgs...)
 	return args
