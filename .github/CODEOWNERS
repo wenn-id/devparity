@@ -1,0 +1,9 @@
+# Default review ownership
+* @wenn-id
+
+# Security-sensitive paths require the repository owner
+/.github/ @wenn-id
+/action.yml @wenn-id
+/scripts/ @wenn-id
+/internal/execute/ @wenn-id
+SECURITY.md @wenn-id

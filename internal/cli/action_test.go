@@ -268,6 +268,64 @@ func TestReleaseWorkflowUsesReadOnlyBuildJobsAndPinnedActions(t *testing.T) {
 	}
 }
 
+func TestRepoGovernanceAndSecurityScanning(t *testing.T) {
+	read := func(path ...string) string {
+		data, err := os.ReadFile(filepath.Join(path...))
+		if err != nil {
+			return "" // a removed/absent file must fail the contains check below
+		}
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
+	}
+	root := filepath.Join("..", "..")
+	verifyText := read(root, ".github", "workflows", "verify.yml")
+	scanText := read(root, ".github", "workflows", "codeql.yml")
+	dependabotText := read(root, ".github", "dependabot.yml")
+	ownersText := read(root, ".github", "CODEOWNERS")
+	contribText := read(root, "CONTRIBUTING.md")
+	cocText := read(root, "CODE_OF_CONDUCT.md")
+
+	for _, required := range []string{
+		"GOBIN=\"$RUNNER_TEMP/devparity-bin\" go install github.com/securego/gosec/v2/cmd/gosec@v2.22.8",
+		"run: gosec -quiet ./...",
+	} {
+		if !strings.Contains(verifyText, required) {
+			t.Fatalf("verify workflow missing gosec gate %q", required)
+		}
+	}
+	const codeqlSHA = "9ee088e13615f8d1eaef4766f9dde95d3356a8f6"
+	for _, required := range []string{
+		"name: CodeQL",
+		"security-events: write",
+		"github/codeql-action/init@" + codeqlSHA,
+		"github/codeql-action/autobuild@" + codeqlSHA,
+		"github/codeql-action/analyze@" + codeqlSHA,
+	} {
+		if !strings.Contains(scanText, required) {
+			t.Fatalf("codeql workflow missing %q", required)
+		}
+	}
+	for _, required := range []string{"package-ecosystem: gomod", "package-ecosystem: github-actions", "schedule:\n      interval: weekly"} {
+		if !strings.Contains(dependabotText, required) {
+			t.Fatalf("dependabot config missing %q", required)
+		}
+	}
+	for _, required := range []string{"@wenn-id", "SECURITY.md", "action.yml"} {
+		if !strings.Contains(ownersText, required) {
+			t.Fatalf("CODEOWNERS missing %q", required)
+		}
+	}
+	for _, required := range []string{"pull request", "static", "--trust-repository", "SECURITY.md"} {
+		if !strings.Contains(contribText, required) {
+			t.Fatalf("CONTRIBUTING.md missing %q", required)
+		}
+	}
+	for _, required := range []string{"Contributor Covenant", "maintainers", "harassment"} {
+		if !strings.Contains(cocText, required) {
+			t.Fatalf("CODE_OF_CONDUCT.md missing %q", required)
+		}
+	}
+}
+
 type workflowStep struct {
 	Run string `yaml:"run"`
 	If  string `yaml:"if"`
