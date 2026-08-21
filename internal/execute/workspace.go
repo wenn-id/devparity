@@ -126,6 +126,7 @@ func CopyWorkspaceWithContext(ctx context.Context, root string, limits Workspace
 		if err != nil {
 			return err
 		}
+		// #nosec G304 -- intentional: destination is the size-bounded workspace copy.
 		output, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, workspaceFileMode)
 		if err != nil {
 			_ = input.Close()
