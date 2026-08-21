@@ -124,10 +124,10 @@ func appendEvidence(evidence *[]model.Fact, seen map[model.Fact]struct{}, fact m
 }
 
 func commandClass(fact model.Fact) string {
-	if fact.Subject != "" && fact.Subject != "script" {
+	if fact.Subject != "" {
 		value := fact.Subject
-		for _, suffix := range []string{"", ":ci", ":local"} {
-			if strings.HasSuffix(value, suffix) && suffix != "" {
+		for _, suffix := range []string{":ci", ":local"} {
+			if strings.HasSuffix(value, suffix) {
 				return strings.TrimSuffix(value, suffix)
 			}
 		}

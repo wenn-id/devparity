@@ -132,5 +132,3 @@ func lineAt(lineStarts []int, offset int64) int {
 	}
 	return line
 }
-
-var _ = json.Delim(0)

@@ -1,7 +1,6 @@
 package analyze
 
 import (
-	"go/ast"
 	"go/parser"
 	"go/token"
 	"path/filepath"
@@ -27,7 +26,6 @@ func TestStaticPackagesDoNotImportExecutionOrNetwork(t *testing.T) {
 				if pathValue == "os/exec" || strings.HasPrefix(pathValue, "net") {
 					t.Fatalf("static package %s imports forbidden %q", path, pathValue)
 				}
-				_ = ast.IsExported
 			}
 		}
 	}
