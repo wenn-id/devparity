@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wenn-id/devparity/internal/model"
@@ -20,6 +21,40 @@ var (
 	commandFunc                  CommandFunc = runCommand
 	containerRuntimeProbeTimeout             = 10 * time.Second
 )
+
+// probeCache memoises the two container runtime probes for the lifetime of
+// the process. A README with N marked blocks would otherwise spawn 2N probe
+// processes (docker info is not fast) inside the user's --timeout budget.
+type containerProbeCache struct {
+	once       sync.Once
+	runtime    string
+	runtimeErr error
+	pidsOnce   sync.Once
+	pidsOK     bool
+	pidsErr    error
+}
+
+var probes containerProbeCache
+
+func resetContainerProbeCache() {
+	probes = containerProbeCache{}
+}
+
+// cachedRuntimeProbe runs probeContainerRuntime at most once per process.
+func cachedRuntimeProbe(ctx context.Context) (string, error) {
+	probes.once.Do(func() {
+		probes.runtime, probes.runtimeErr = probeContainerRuntime(ctx)
+	})
+	return probes.runtime, probes.runtimeErr
+}
+
+// cachedPidsLimitProbe runs probePidsLimitSupport at most once per process.
+func cachedPidsLimitProbe(ctx context.Context, runtimeName string, maxOutput int64) (bool, error) {
+	probes.pidsOnce.Do(func() {
+		probes.pidsOK, probes.pidsErr = probePidsLimitSupport(ctx, runtimeName, maxOutput)
+	})
+	return probes.pidsOK, probes.pidsErr
+}
 
 func probeContainerRuntime(ctx context.Context) (string, error) {
 	if ctx == nil {
@@ -59,7 +94,7 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	if !grant.container {
 		return model.ExecutionResult{}, errors.New("container execution requires a container grant")
 	}
-	runtimeName, probeErr := probeContainerRuntime(ctx)
+	runtimeName, probeErr := cachedRuntimeProbe(ctx)
 	if probeErr != nil {
 		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: probeErr.Error()}, nil
 	}
@@ -92,23 +127,27 @@ func runContainerWithRuntime(ctx context.Context, grant Grant, runtimeName strin
 	if opts.MaxOutput <= 0 {
 		opts.MaxOutput = defaultMaxOutput
 	}
-	commandContext, cancel := context.WithTimeout(ctx, opts.Timeout)
-	defer cancel()
-
 	if runtimeName == "" {
 		return model.ExecutionResult{}, errors.New("container execution requires a selected runtime")
 	}
-	pidsSupported, pidsErr := probePidsLimitSupport(commandContext, runtimeName, opts.MaxOutput)
+	// Probes and workspace setup run outside the user's --timeout budget so
+	// the budget covers the command itself, as the flag's name implies. The
+	// runtime probe keeps its own bounded timeout (containerRuntimeProbeTimeout).
+	setupContext := ctx
+	if setupContext == nil {
+		setupContext = context.Background()
+	}
+	pidsSupported, pidsErr := cachedPidsLimitProbe(setupContext, runtimeName, opts.MaxOutput)
 	if pidsErr != nil {
 		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusFinding, Stderr: redactor.Redact(pidsErr.Error())}, nil
 	}
 	if !pidsSupported {
 		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusFinding, Stderr: redactor.Redact("process limit --pids-limit 256 is unsupported by the container runtime; user script was not executed")}, nil
 	}
-	if err := checkWorkspaceContext(commandContext); err != nil {
+	if err := checkWorkspaceContext(setupContext); err != nil {
 		return model.ExecutionResult{}, err
 	}
-	workspace, workspaceCleanup, err := CopyWorkspaceWithContext(commandContext, opts.Root, defaultWorkspaceLimits)
+	workspace, workspaceCleanup, err := CopyWorkspaceWithContext(setupContext, opts.Root, defaultWorkspaceLimits)
 	if err != nil {
 		return model.ExecutionResult{}, fmt.Errorf("container workspace setup failed: %s", redactor.Redact(err.Error()))
 	}
@@ -147,6 +186,10 @@ func runContainerWithRuntime(ctx context.Context, grant Grant, runtimeName strin
 		}
 	}()
 	args := buildContainerArgs(containerName, workspace, version, shell, shellArgs, environment, opts)
+	// The user's --timeout budget starts here, after probes and workspace
+	// setup, so it covers the command itself.
+	commandContext, cancel := context.WithTimeout(setupContext, opts.Timeout)
+	defer cancel()
 	start := time.Now()
 	cleanupArmed = true
 	stdout, stderr, exit, runErr := commandFunc(commandContext, runtimeName, args, opts.MaxOutput)
