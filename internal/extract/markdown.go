@@ -32,13 +32,19 @@ func MarkdownVersions(root string, paths []string) ([]model.Fact, []model.Findin
 			findings = append(findings, parseFinding(path, err))
 			continue
 		}
-		fenced := false
+		fenceChar := byte(0)
+		fenceLen := 0
 		for lineNumber, line := range splitLines(data) {
-			if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-				fenced = !fenced
+			if char, runLen, closing := markdownFence(line); runLen > 0 {
+				switch {
+				case fenceLen == 0:
+					fenceChar, fenceLen = char, runLen
+				case char == fenceChar && runLen >= fenceLen && closing:
+					fenceChar, fenceLen = 0, 0
+				}
 				continue
 			}
-			if fenced {
+			if fenceLen > 0 {
 				continue
 			}
 			matches := nodeRequirementPrefix.FindAllStringIndex(line, -1)
@@ -72,6 +78,24 @@ func MarkdownVersions(root string, paths []string) ([]model.Fact, []model.Findin
 		}
 	}
 	return facts, findings
+}
+
+// markdownFence reports a backtick/tilde run at the start of a Markdown line.
+// A run closes an existing fence only when it uses the same character, is at
+// least as long, and has no info string after it.
+func markdownFence(line string) (char byte, runLen int, closing bool) {
+	trimmed := strings.TrimSpace(line)
+	if len(trimmed) < 3 || (trimmed[0] != '`' && trimmed[0] != '~') {
+		return 0, 0, false
+	}
+	char = trimmed[0]
+	for runLen < len(trimmed) && trimmed[runLen] == char {
+		runLen++
+	}
+	if runLen < 3 {
+		return 0, 0, false
+	}
+	return char, runLen, strings.TrimSpace(trimmed[runLen:]) == ""
 }
 
 // nodeProseConstraint extracts the Node version constraint at the start of

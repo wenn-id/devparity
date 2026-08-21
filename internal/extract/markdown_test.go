@@ -76,6 +76,34 @@ func TestMarkdownVersions(t *testing.T) {
 			name:     "tilde fenced code blocks are skipped",
 			contents: "~~~\nnode 16\n~~~\n",
 		},
+		{
+			name:      "shorter fence inside a longer block does not close it",
+			contents:  "````\nNode 16 inside\n```\nstill fenced\n````\n\nNode 20.\n",
+			wantValue: "20",
+			wantLine:  7,
+			wantFacts: 1,
+		},
+		{
+			name:      "mismatched fence markers do not close the block",
+			contents:  "```\nNode 16 inside\n~~~\nstill fenced\n```\n\nNode 20.\n",
+			wantValue: "20",
+			wantLine:  7,
+			wantFacts: 1,
+		},
+		{
+			name:      "fence with info string opens and bare run closes",
+			contents:  "```bash\nnode 16\n```\n\nNode 20.\n",
+			wantValue: "20",
+			wantLine:  5,
+			wantFacts: 1,
+		},
+		{
+			name:      "closing fence with trailing text does not close the block",
+			contents:  "```\nnode 16\n``` text\nstill fenced\n```\n\nNode 20.\n",
+			wantValue: "20",
+			wantLine:  7,
+			wantFacts: 1,
+		},
 	}
 
 	for _, test := range tests {
