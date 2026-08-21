@@ -42,7 +42,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "GITHUB_STEP_SUMMARY is required for --format github")
 			return 2
 		}
-		file, openErr := os.OpenFile(summaryPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		file, openErr := os.OpenFile(summaryPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) // #nosec G302 G304 -- GitHub requires a world-readable summary; path comes from runtime-controlled GITHUB_STEP_SUMMARY.
 		if openErr != nil {
 			fmt.Fprintln(stderr, openErr)
 			return 2

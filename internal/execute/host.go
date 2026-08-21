@@ -64,6 +64,7 @@ func RunHost(ctx context.Context, grant Grant, block model.DocBlock, opts Option
 	}
 	commandContext, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
+	// #nosec G204 -- intentional: execute explicitly trusted documentation commands.
 	command := exec.CommandContext(commandContext, executable, args...)
 	processTree, err := configureHostProcessTree(command)
 	if err != nil {

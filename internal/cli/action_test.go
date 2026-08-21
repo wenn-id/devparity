@@ -268,9 +268,117 @@ func TestReleaseWorkflowUsesReadOnlyBuildJobsAndPinnedActions(t *testing.T) {
 	}
 }
 
+func TestRepoGovernanceAndSecurityScanning(t *testing.T) {
+	read := func(path ...string) string {
+		data, err := os.ReadFile(filepath.Join(path...))
+		if err != nil {
+			return "" // a removed/absent file must fail the contains check below
+		}
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
+	}
+	root := filepath.Join("..", "..")
+	verifyData, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "verify.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanText := read(root, ".github", "workflows", "codeql.yml")
+	dependabotData, err := os.ReadFile(filepath.Join(root, ".github", "dependabot.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownersText := read(root, ".github", "CODEOWNERS")
+	contribText := read(root, "CONTRIBUTING.md")
+	cocText := read(root, "CODE_OF_CONDUCT.md")
+
+	verifyText := string(verifyData)
+	// Gosec must run install + scan as Linux-only steps in the verify job.
+	if !strings.Contains(verifyText, "go install github.com/securego/gosec/v2/cmd/gosec@v2.22.8") {
+		t.Fatal("verify workflow missing gosec install")
+	}
+	linuxSteps := workflowJobSteps(t, verifyText, "test")
+	if !containsWorkflowRun(linuxSteps, "gosec -quiet ./...", "runner.os == 'Linux'") {
+		t.Fatal("verify job has no Linux-gated gosec scan step")
+	}
+
+	// CodeQL: parse the analyze job and assert scoped permission + ordered pinned action steps.
+	var codeql struct {
+		Jobs map[string]struct {
+			Permissions map[string]string `yaml:"permissions"`
+			Steps       []workflowStep    `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(scanText), &codeql); err != nil {
+		t.Fatalf("parse codeql workflow: %v", err)
+	}
+	analyze, ok := codeql.Jobs["analyze"]
+	if !ok {
+		t.Fatal("codeql workflow missing analyze job")
+	}
+	if analyze.Permissions["security-events"] != "write" {
+		t.Fatal("codeql analyze job must scope security-events: write")
+	}
+	const codeqlSHA = "9ee088e13615f8d1eaef4766f9dde95d3356a8f6"
+	codeqlRuns := []string{}
+	for _, s := range analyze.Steps {
+		if strings.HasPrefix(s.Uses, "github/codeql-action/") {
+			codeqlRuns = append(codeqlRuns, s.Uses)
+		}
+	}
+	want := []string{
+		"github/codeql-action/init@" + codeqlSHA,
+		"github/codeql-action/autobuild@" + codeqlSHA,
+		"github/codeql-action/analyze@" + codeqlSHA,
+	}
+	for i := range want {
+		if i >= len(codeqlRuns) || !strings.Contains(codeqlRuns[i], want[i]) {
+			t.Fatalf("codeql analyze steps must run init->autobuild->analyze pinned at %s", codeqlSHA)
+		}
+	}
+
+	// Dependabot: root Go modules and GitHub Actions both on a weekly schedule.
+	var dependabot struct {
+		Updates []struct {
+			Ecosystem string `yaml:"package-ecosystem"`
+			Directory string `yaml:"directory"`
+			Schedule  struct {
+				Interval string `yaml:"interval"`
+			} `yaml:"schedule"`
+		} `yaml:"updates"`
+	}
+	if err := yaml.Unmarshal(dependabotData, &dependabot); err != nil {
+		t.Fatalf("parse dependabot config: %v", err)
+	}
+	gotSchedule := map[string]string{}
+	for _, u := range dependabot.Updates {
+		gotSchedule[u.Ecosystem+u.Directory] = u.Schedule.Interval
+	}
+	for _, wantK := range []string{"gomod/", "github-actions/"} {
+		if gotSchedule[wantK] != "weekly" {
+			t.Fatalf("dependabot update %q must be weekly, got %q", wantK, gotSchedule[wantK])
+		}
+	}
+
+	for _, required := range []string{"@wenn-id", "SECURITY.md", "action.yml"} {
+		if !strings.Contains(ownersText, required) {
+			t.Fatalf("CODEOWNERS missing %q", required)
+		}
+	}
+	for _, required := range []string{"pull request", "static", "--trust-repository", "SECURITY.md"} {
+		if !strings.Contains(contribText, required) {
+			t.Fatalf("CONTRIBUTING.md missing %q", required)
+		}
+	}
+	for _, required := range []string{"Contributor Covenant", "maintainers", "harassment"} {
+		if !strings.Contains(cocText, required) {
+			t.Fatalf("CODE_OF_CONDUCT.md missing %q", required)
+		}
+	}
+}
+
 type workflowStep struct {
-	Run string `yaml:"run"`
-	If  string `yaml:"if"`
+	Run  string `yaml:"run"`
+	If   string `yaml:"if"`
+	Uses string `yaml:"uses"`
 }
 
 func workflowJobSteps(t *testing.T, workflow, job string) []workflowStep {
