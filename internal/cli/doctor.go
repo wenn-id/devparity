@@ -11,16 +11,17 @@ import (
 )
 
 func runDoctor(args []string, stdout, stderr io.Writer) int {
-	flags, path, err := normalizePathArgs(args, map[string]bool{"--format": true})
+	flags, path, err := normalizePathArgs(args, doctorFlags)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
 	set := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	set.SetOutput(stderr)
+	set.SetOutput(io.Discard)
 	format := set.String("format", "text", "report format")
 	strict := set.Bool("strict", false, "fail when findings exist")
 	if err := set.Parse(flags); err != nil {
+		fmt.Fprintf(stderr, "%v\n%s\n", err, doctorFlags.Usage())
 		return 2
 	}
 	if path == "" {
