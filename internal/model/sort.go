@@ -33,6 +33,8 @@ func Summarize(findings []Finding) Summary {
 			summary.Skipped++
 		case StatusInconclusive:
 			summary.Inconclusive++
+		case StatusNoEvidence:
+			summary.NoEvidence++
 		}
 	}
 	return summary

@@ -5,13 +5,17 @@ type Severity string
 type FactKind string
 
 const (
-	StatusPass         Status   = "pass"
-	StatusFinding      Status   = "finding"
-	StatusSkipped      Status   = "skipped"
-	StatusInconclusive Status   = "inconclusive"
-	SeverityInfo       Severity = "info"
-	SeverityWarning    Severity = "warning"
-	SeverityError      Severity = "error"
+	StatusPass         Status = "pass"
+	StatusFinding      Status = "finding"
+	StatusSkipped      Status = "skipped"
+	StatusInconclusive Status = "inconclusive"
+	// StatusNoEvidence marks a rule that had nothing to compare. It is
+	// distinct from StatusPass so "pass" always means a check that actually
+	// ran and verified something.
+	StatusNoEvidence Status   = "no-evidence"
+	SeverityInfo     Severity = "info"
+	SeverityWarning  Severity = "warning"
+	SeverityError    Severity = "error"
 )
 
 type SourceRef struct {
@@ -58,6 +62,7 @@ type Summary struct {
 	Finding      int `json:"finding"`
 	Skipped      int `json:"skipped"`
 	Inconclusive int `json:"inconclusive"`
+	NoEvidence   int `json:"no_evidence"`
 }
 
 type Report struct {

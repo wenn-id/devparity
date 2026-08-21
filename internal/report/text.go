@@ -8,7 +8,7 @@ import (
 )
 
 func Text(w io.Writer, value model.Report) error {
-	if _, err := fmt.Fprintf(w, "DevParity %s\nRepository: %s\nSummary: pass=%d finding=%d skipped=%d inconclusive=%d\n", textField(value.ToolVersion), textField(value.Repository), value.Summary.Pass, value.Summary.Finding, value.Summary.Skipped, value.Summary.Inconclusive); err != nil {
+	if _, err := fmt.Fprintf(w, "DevParity %s\nRepository: %s\nSummary: pass=%d finding=%d skipped=%d inconclusive=%d no-evidence=%d\n", textField(value.ToolVersion), textField(value.Repository), value.Summary.Pass, value.Summary.Finding, value.Summary.Skipped, value.Summary.Inconclusive, value.Summary.NoEvidence); err != nil {
 		return err
 	}
 	for _, finding := range value.Results {
