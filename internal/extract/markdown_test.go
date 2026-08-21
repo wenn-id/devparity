@@ -43,6 +43,67 @@ func TestMarkdownVersions(t *testing.T) {
 			name:     "unrelated prose is ignored",
 			contents: "This project has no runtime requirement.\n",
 		},
+		{
+			name:     "ordinary prose mentioning Node.js twice is ignored",
+			contents: "Node.js is a runtime. Node.js powers everything.\n",
+		},
+		{
+			name:      "open-ended plus suffix means >=N",
+			contents:  "Requires Node 18+ to build.\n",
+			wantValue: ">=18",
+			wantLine:  1,
+			wantFacts: 1,
+		},
+		{
+			name:      "open-ended plus suffix after version word",
+			contents:  "Use node version 20+ in CI.\n",
+			wantValue: ">=20",
+			wantLine:  1,
+			wantFacts: 1,
+		},
+		{
+			name:     "unsupported plus spelling is dropped",
+			contents: "Requires Node 18.4.1+ exactly.\n",
+		},
+		{
+			name:      "fenced code blocks are skipped",
+			contents:  "```bash\nNode.js 16 is mentioned in a fenced block.\n```\n\nNode 20.\n",
+			wantValue: "20",
+			wantLine:  5,
+			wantFacts: 1,
+		},
+		{
+			name:     "tilde fenced code blocks are skipped",
+			contents: "~~~\nnode 16\n~~~\n",
+		},
+		{
+			name:      "shorter fence inside a longer block does not close it",
+			contents:  "````\nNode 16 inside\n```\nstill fenced\n````\n\nNode 20.\n",
+			wantValue: "20",
+			wantLine:  7,
+			wantFacts: 1,
+		},
+		{
+			name:      "mismatched fence markers do not close the block",
+			contents:  "```\nNode 16 inside\n~~~\nstill fenced\n```\n\nNode 20.\n",
+			wantValue: "20",
+			wantLine:  7,
+			wantFacts: 1,
+		},
+		{
+			name:      "fence with info string opens and bare run closes",
+			contents:  "```bash\nnode 16\n```\n\nNode 20.\n",
+			wantValue: "20",
+			wantLine:  5,
+			wantFacts: 1,
+		},
+		{
+			name:      "closing fence with trailing text does not close the block",
+			contents:  "```\nnode 16\n``` text\nstill fenced\n```\n\nNode 20.\n",
+			wantValue: "20",
+			wantLine:  7,
+			wantFacts: 1,
+		},
 	}
 
 	for _, test := range tests {
