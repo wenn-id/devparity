@@ -16,6 +16,10 @@ import (
 const (
 	defaultTimeout         = 10 * time.Minute
 	defaultMaxOutput int64 = 1 << 20
+
+	// truncationMarkerMaxBytes bounds the extra bytes the truncation marker
+	// may add on top of the captured output cap.
+	truncationMarkerMaxBytes int64 = 64
 )
 
 type Options struct {
@@ -176,6 +180,9 @@ func exitCode(err error) int {
 type cappedWriter struct {
 	data []byte
 	max  int64
+	// truncated records that at least one write was dropped because the
+	// cap was reached, so String() can mark the output as incomplete.
+	truncated bool
 }
 
 func (w *cappedWriter) Write(data []byte) (int, error) {
@@ -184,10 +191,21 @@ func (w *cappedWriter) Write(data []byte) (int, error) {
 	if remaining > 0 {
 		if int64(len(data)) > remaining {
 			data = data[:remaining]
+			w.truncated = true
 		}
 		w.data = append(w.data, data...)
+	} else if total > 0 {
+		w.truncated = true
 	}
 	return total, nil
 }
 
-func (w *cappedWriter) String() string { return string(w.data) }
+// String returns the captured output. When the cap was hit, a trailing
+// marker is appended so a reader can tell the log is incomplete — the tail
+// that was dropped usually contains the actual error.
+func (w *cappedWriter) String() string {
+	if !w.truncated {
+		return string(w.data)
+	}
+	return string(w.data) + fmt.Sprintf("\n[devparity: output truncated at %d bytes]", w.max)
+}

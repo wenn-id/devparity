@@ -1,6 +1,7 @@
 package execute
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -337,8 +338,13 @@ func TestRunCommandCapsBothStreams(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("exit=%d", exit)
 	}
-	if int64(len(stdout)) > defaultMaxOutput || int64(len(stderr)) > defaultMaxOutput {
-		t.Fatalf("stdout=%d stderr=%d limit=%d", len(stdout), len(stderr), defaultMaxOutput)
+	// The cap applies to the captured output; a truncation marker may be
+	// appended on top of it and must be present exactly when the cap hit.
+	if !bytes.Contains(stdout, []byte("[devparity: output truncated at")) || !bytes.Contains(stderr, []byte("[devparity: output truncated at")) {
+		t.Fatalf("stdout=%q stderr=%q, want truncation marker", stdout, stderr)
+	}
+	if int64(len(stdout)) > defaultMaxOutput+truncationMarkerMaxBytes || int64(len(stderr)) > defaultMaxOutput+truncationMarkerMaxBytes {
+		t.Fatalf("stdout=%d stderr=%d limit=%d(+marker)", len(stdout), len(stderr), defaultMaxOutput)
 	}
 }
 
@@ -348,8 +354,11 @@ func TestRunCommandUsesConfiguredLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exit != 0 || len(stdout) > 64 || len(stderr) > 64 {
+	if exit != 0 || len(stdout) > 64+int(truncationMarkerMaxBytes) || len(stderr) > 64+int(truncationMarkerMaxBytes) {
 		t.Fatalf("exit=%d stdout=%d stderr=%d", exit, len(stdout), len(stderr))
+	}
+	if !bytes.Contains(stdout, []byte("[devparity: output truncated at 64 bytes]")) {
+		t.Fatalf("stdout=%q, want truncation marker naming the configured limit", stdout)
 	}
 }
 

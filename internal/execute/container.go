@@ -338,11 +338,11 @@ func runCommand(ctx context.Context, name string, args []string, maxOutput int64
 	command.Stderr = stderr
 	err := command.Run()
 	if err == nil {
-		return stdout.data, stderr.data, 0, nil
+		return []byte(stdout.String()), []byte(stderr.String()), 0, nil
 	}
 	var exitError *exec.ExitError
 	if errors.As(err, &exitError) {
-		return stdout.data, stderr.data, exitError.ExitCode(), nil
+		return []byte(stdout.String()), []byte(stderr.String()), exitError.ExitCode(), nil
 	}
-	return stdout.data, stderr.data, -1, err
+	return []byte(stdout.String()), []byte(stderr.String()), -1, err
 }
