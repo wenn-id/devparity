@@ -22,13 +22,13 @@ func runDocs(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "usage: devparity docs verify [path] [--format text|json]")
 		return 2
 	}
-	flags, path, err := normalizePathArgs(args[1:], map[string]bool{"--format": true, "--env": true, "--timeout": true, "--node-version": true})
+	flags, path, err := normalizePathArgs(args[1:], docsVerifyFlags)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
 	set := flag.NewFlagSet("docs verify", flag.ContinueOnError)
-	set.SetOutput(stderr)
+	set.SetOutput(io.Discard)
 	format := set.String("format", "text", "report format")
 	executeCommands := set.Bool("execute", false, "execute marked documentation")
 	trustRepository := set.Bool("trust-repository", false, "trust the repository for host execution")
@@ -39,6 +39,7 @@ func runDocs(args []string, stdout, stderr io.Writer) int {
 	set.Var(&envNames, "env", "forward one environment variable")
 	timeout := set.Duration("timeout", 0, "execution timeout")
 	if err := set.Parse(flags); err != nil {
+		fmt.Fprintf(stderr, "%v\n%s\n", err, docsVerifyFlags.Usage())
 		return 2
 	}
 	if *format != "text" && *format != "json" {
