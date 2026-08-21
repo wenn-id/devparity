@@ -47,7 +47,7 @@ try {
     if ($parts.Count -ge 2 -and $parts[1] -eq $asset) { $checksumLine = $parts[0]; break }
   }
   if (-not $checksumLine) { throw "checksum entry missing for $asset" }
-  $expected = $checksumLine.ToUpperInvariant()
+  $expected = $checksumLine.Trim().ToUpperInvariant()
   $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash.ToUpperInvariant()
   if ($actual -ne $expected) { throw "checksum mismatch for $asset (expected=$expected actual=$actual)" }
 
