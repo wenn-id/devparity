@@ -392,7 +392,8 @@ func TestReleaseChecksumsUseBasenames(t *testing.T) {
 		t.Fatal("action entrypoint checksum verification no longer expects basename entries")
 	}
 	ps1Text := read("..", "..", "scripts", "action-entrypoint.ps1")
-	if !strings.Contains(ps1Text, `('^([0-9a-fA-F]{64})  ' + [regex]::Escape($asset) + '\r?$')`) {
+	if !strings.Contains(ps1Text, `$parts = $line.Split([char[]]' ', [System.StringSplitOptions]::RemoveEmptyEntries)`) ||
+		!strings.Contains(ps1Text, `if ($parts.Count -ge 2 -and $parts[1] -eq $asset)`) {
 		t.Fatal("Windows action entrypoint checksum verification no longer matches the shared basename contract")
 	}
 	if strings.Contains(releaseText+buildText, "sha256sum dist/* > dist/checksums.txt") {

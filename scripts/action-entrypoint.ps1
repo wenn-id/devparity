@@ -38,14 +38,16 @@ try {
   Invoke-WebRequest -UseBasicParsing -Uri "$ReleaseBaseUrl/$asset" -OutFile $binary
   Invoke-WebRequest -UseBasicParsing -Uri "$ReleaseBaseUrl/checksums.txt" -OutFile $checksums
 
-  # Shared checksum contract with the bash entrypoint: 64 hex chars, two
-  # spaces, the asset basename, then end-of-line. Accept an optional CR so a
-  # CRLF checksums.txt still matches.
-  $checksumLine = Get-Content -LiteralPath $checksums |
-    Where-Object { $_ -match ('^([0-9a-fA-F]{64})  ' + [regex]::Escape($asset) + '\r?$') } |
-    Select-Object -First 1
+  # Shared checksum contract with the bash entrypoint: whitespace-separated
+  # hash followed by the asset basename. Parse deterministically so trailing
+  # CR/LF or a CRLF manifest does not affect matching.
+  $checksumLine = $null
+  foreach ($line in Get-Content -LiteralPath $checksums) {
+    $parts = $line.Split([char[]]' ', [System.StringSplitOptions]::RemoveEmptyEntries)
+    if ($parts.Count -ge 2 -and $parts[1] -eq $asset) { $checksumLine = $parts[0]; break }
+  }
   if (-not $checksumLine) { throw "checksum entry missing for $asset" }
-  $expected = ($checksumLine -split '\s+', 2)[0].ToUpperInvariant()
+  $expected = $checksumLine.ToUpperInvariant()
   $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash.ToUpperInvariant()
   if ($actual -ne $expected) { throw "checksum mismatch for $asset" }
 
