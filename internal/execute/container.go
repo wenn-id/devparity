@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wenn-id/devparity/internal/model"
@@ -20,6 +21,70 @@ var (
 	commandFunc                  CommandFunc = runCommand
 	containerRuntimeProbeTimeout             = 10 * time.Second
 )
+
+// containerProbeCache memoises the two container runtime probes for the
+// lifetime of the process. A README with N marked blocks would otherwise
+// spawn 2N probe processes (docker info is not fast) inside the user's
+// --timeout budget.
+//
+// Only successful probes are cached. A failed or canceled probe stays
+// uncached so a transient daemon outage (or a canceled first context) does
+// not permanently skip every later block in the same process.
+type containerProbeCache struct {
+	mu sync.Mutex
+	// runtime is the probed runtime name, empty until a probe succeeds.
+	runtime string
+	// pidsRuntime records which runtime pidsOK belongs to, so a different
+	// runtime is probed again instead of reusing an unrelated result.
+	pidsRuntime string
+	pidsKnown   bool
+	pidsOK      bool
+}
+
+var probes containerProbeCache
+
+func resetContainerProbeCache() {
+	probes.mu.Lock()
+	defer probes.mu.Unlock()
+	probes.runtime = ""
+	probes.pidsRuntime = ""
+	probes.pidsKnown = false
+	probes.pidsOK = false
+}
+
+// cachedRuntimeProbe runs probeContainerRuntime at most once per process
+// after it succeeds; failures are retried on the next call.
+func cachedRuntimeProbe(ctx context.Context) (string, error) {
+	probes.mu.Lock()
+	defer probes.mu.Unlock()
+	if probes.runtime != "" {
+		return probes.runtime, nil
+	}
+	runtimeName, err := probeContainerRuntime(ctx)
+	if err != nil {
+		return "", err
+	}
+	probes.runtime = runtimeName
+	return runtimeName, nil
+}
+
+// cachedPidsLimitProbe runs probePidsLimitSupport at most once per process
+// per runtime after it succeeds; failures are retried on the next call.
+func cachedPidsLimitProbe(ctx context.Context, runtimeName string, maxOutput int64) (bool, error) {
+	probes.mu.Lock()
+	defer probes.mu.Unlock()
+	if probes.pidsKnown && probes.pidsRuntime == runtimeName {
+		return probes.pidsOK, nil
+	}
+	supported, err := probePidsLimitSupport(ctx, runtimeName, maxOutput)
+	if err != nil {
+		return false, err
+	}
+	probes.pidsRuntime = runtimeName
+	probes.pidsKnown = true
+	probes.pidsOK = supported
+	return supported, nil
+}
 
 func probeContainerRuntime(ctx context.Context) (string, error) {
 	if ctx == nil {
@@ -59,7 +124,7 @@ func RunContainer(ctx context.Context, grant Grant, block model.DocBlock, opts O
 	if !grant.container {
 		return model.ExecutionResult{}, errors.New("container execution requires a container grant")
 	}
-	runtimeName, probeErr := probeContainerRuntime(ctx)
+	runtimeName, probeErr := cachedRuntimeProbe(ctx)
 	if probeErr != nil {
 		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusSkipped, Stderr: probeErr.Error()}, nil
 	}
@@ -92,23 +157,27 @@ func runContainerWithRuntime(ctx context.Context, grant Grant, runtimeName strin
 	if opts.MaxOutput <= 0 {
 		opts.MaxOutput = defaultMaxOutput
 	}
-	commandContext, cancel := context.WithTimeout(ctx, opts.Timeout)
-	defer cancel()
-
 	if runtimeName == "" {
 		return model.ExecutionResult{}, errors.New("container execution requires a selected runtime")
 	}
-	pidsSupported, pidsErr := probePidsLimitSupport(commandContext, runtimeName, opts.MaxOutput)
+	// Probes and workspace setup run outside the user's --timeout budget so
+	// the budget covers the command itself, as the flag's name implies. The
+	// runtime probe keeps its own bounded timeout (containerRuntimeProbeTimeout).
+	setupContext := ctx
+	if setupContext == nil {
+		setupContext = context.Background()
+	}
+	pidsSupported, pidsErr := cachedPidsLimitProbe(setupContext, runtimeName, opts.MaxOutput)
 	if pidsErr != nil {
 		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusFinding, Stderr: redactor.Redact(pidsErr.Error())}, nil
 	}
 	if !pidsSupported {
 		return model.ExecutionResult{BlockID: block.ID, Mode: "container", Status: model.StatusFinding, Stderr: redactor.Redact("process limit --pids-limit 256 is unsupported by the container runtime; user script was not executed")}, nil
 	}
-	if err := checkWorkspaceContext(commandContext); err != nil {
+	if err := checkWorkspaceContext(setupContext); err != nil {
 		return model.ExecutionResult{}, err
 	}
-	workspace, workspaceCleanup, err := CopyWorkspaceWithContext(commandContext, opts.Root, defaultWorkspaceLimits)
+	workspace, workspaceCleanup, err := CopyWorkspaceWithContext(setupContext, opts.Root, defaultWorkspaceLimits)
 	if err != nil {
 		return model.ExecutionResult{}, fmt.Errorf("container workspace setup failed: %s", redactor.Redact(err.Error()))
 	}
@@ -147,6 +216,10 @@ func runContainerWithRuntime(ctx context.Context, grant Grant, runtimeName strin
 		}
 	}()
 	args := buildContainerArgs(containerName, workspace, version, shell, shellArgs, environment, opts)
+	// The user's --timeout budget starts here, after probes and workspace
+	// setup, so it covers the command itself.
+	commandContext, cancel := context.WithTimeout(setupContext, opts.Timeout)
+	defer cancel()
 	start := time.Now()
 	cleanupArmed = true
 	stdout, stderr, exit, runErr := commandFunc(commandContext, runtimeName, args, opts.MaxOutput)

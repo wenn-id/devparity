@@ -3,6 +3,7 @@ package execute
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +17,8 @@ import (
 
 func TestProbeContainerRuntimeFailsClosed(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(name string) (string, error) {
 		if name == "docker" || name == "podman" {
 			return "/fake/" + name, nil
@@ -66,7 +68,8 @@ func TestProbeRuntimeGivesEachCandidateFreshContext(t *testing.T) {
 
 func TestRunContainerFallsBackToUsableRuntime(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(name string) (string, error) {
 		if name == "docker" || name == "podman" {
 			return "/fake/" + name, nil
@@ -102,9 +105,180 @@ func TestRunContainerFallsBackToUsableRuntime(t *testing.T) {
 	}
 }
 
+func TestRunContainerCachesRuntimeAndPidsProbes(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" {
+			return "/fake/docker", nil
+		}
+		return "", errors.New("not found")
+	}
+	var infoCalls, helpCalls, scriptCalls int
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 1 && args[0] == "info" {
+			infoCalls++
+			return nil, nil, 0, nil
+		}
+		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
+			helpCalls++
+			return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+		}
+		switch args[0] {
+		case "run":
+			scriptCalls++
+			return []byte("ok"), nil, 0, nil
+		case "rm":
+			return nil, nil, 0, nil
+		default:
+			return nil, nil, -1, errors.New("unexpected command")
+		}
+	}
+	for index := 0; index < 2; index++ {
+		result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{ID: fmt.Sprintf("README.md:%d", index+2), Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Status != model.StatusPass {
+			t.Fatalf("run %d result=%#v", index, result)
+		}
+	}
+	if infoCalls != 1 || helpCalls != 1 || scriptCalls != 2 {
+		t.Fatalf("probe calls info=%d help=%d script=%d, want 1,1,2", infoCalls, helpCalls, scriptCalls)
+	}
+}
+
+func TestRunContainerRetriesProbesAfterTransientFailure(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" {
+			return "/fake/docker", nil
+		}
+		return "", errors.New("not found")
+	}
+	var infoCalls, helpCalls, scriptCalls int
+	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 1 && args[0] == "info" {
+			infoCalls++
+			if infoCalls == 1 {
+				// Transient daemon outage on the first block.
+				return nil, []byte("daemon unavailable"), 1, nil
+			}
+			return nil, nil, 0, nil
+		}
+		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
+			helpCalls++
+			if helpCalls == 1 {
+				// Transient capability-probe failure on the first attempt.
+				return nil, []byte("temporary failure"), 1, nil
+			}
+			return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+		}
+		switch args[0] {
+		case "run":
+			scriptCalls++
+			return []byte("ok"), nil, 0, nil
+		case "rm":
+			return nil, nil, 0, nil
+		default:
+			return nil, nil, -1, errors.New("unexpected command")
+		}
+	}
+	block := model.DocBlock{ID: "README.md:2", Shell: "sh", Script: "true"}
+	options := Options{Root: t.TempDir(), NodeVersion: "22"}
+
+	// First block: runtime probe fails, result is skipped, nothing cached.
+	first, err := RunContainer(context.Background(), NewContainerGrant(), block, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Status != model.StatusSkipped {
+		t.Fatalf("first result=%#v, want skipped", first)
+	}
+
+	// Second block: runtime probe succeeds, pids probe fails transiently.
+	second, err := RunContainer(context.Background(), NewContainerGrant(), block, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Status != model.StatusFinding {
+		t.Fatalf("second result=%#v, want finding from pids probe failure", second)
+	}
+
+	// Third block: both probes succeed and the user script finally runs.
+	third, err := RunContainer(context.Background(), NewContainerGrant(), block, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Status != model.StatusPass {
+		t.Fatalf("third result=%#v, want pass after probes recover", third)
+	}
+	if scriptCalls != 1 {
+		t.Fatalf("scriptCalls=%d, want 1", scriptCalls)
+	}
+	if infoCalls != 2 {
+		t.Fatalf("infoCalls=%d, want 2 (failed probe retried, success cached)", infoCalls)
+	}
+	if helpCalls != 2 {
+		t.Fatalf("helpCalls=%d, want 2 (failed probe retried, success cached)", helpCalls)
+	}
+}
+
+func TestRunContainerTimeoutStartsAfterSetup(t *testing.T) {
+	oldLookPath, oldCommand := lookPath, commandFunc
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
+	lookPath = func(name string) (string, error) {
+		if name == "docker" {
+			return "/fake/docker", nil
+		}
+		return "", errors.New("not found")
+	}
+	const setupDelay = 40 * time.Millisecond
+	var commandStarted time.Time
+	commandFunc = func(ctx context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
+		if len(args) == 1 && args[0] == "info" {
+			time.Sleep(setupDelay)
+			return nil, nil, 0, nil
+		}
+		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
+			time.Sleep(setupDelay)
+			return []byte("Usage: docker run --pids-limit"), nil, 0, nil
+		}
+		if len(args) > 0 && args[0] == "run" {
+			commandStarted = time.Now()
+			if _, ok := ctx.Deadline(); !ok {
+				t.Fatal("command context has no timeout deadline")
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, nil, -1, err
+			}
+			return []byte("ok"), nil, 0, nil
+		}
+		if len(args) > 0 && args[0] == "rm" {
+			return nil, nil, 0, nil
+		}
+		return nil, nil, -1, errors.New("unexpected command")
+	}
+	result, err := RunContainer(context.Background(), NewContainerGrant(), model.DocBlock{Shell: "sh", Script: "true"}, Options{Root: t.TempDir(), NodeVersion: "22", Timeout: 20 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != model.StatusPass {
+		t.Fatalf("result=%#v, setup should not consume command timeout", result)
+	}
+	if commandStarted.IsZero() {
+		t.Fatal("user command did not run")
+	}
+}
+
 func TestRunContainerBuildsRestrictedArguments(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(name string) (string, error) {
 		if name == "docker" {
 			return "/fake/docker", nil
@@ -203,7 +377,8 @@ func TestRunCommandPreservesBothStreamsOnFailure(t *testing.T) {
 
 func TestRunContainerDoesNotClassifyCommandStderrAsRuntimeFailure(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
 		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
@@ -228,7 +403,8 @@ func TestRunContainerDoesNotClassifyCommandStderrAsRuntimeFailure(t *testing.T) 
 
 func TestRunContainerDoesNotClassifySpoofedRuntimeStderr(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
 		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
@@ -260,7 +436,8 @@ func TestRunContainerDoesNotClassifySpoofedRuntimeStderr(t *testing.T) {
 
 func TestRunContainerRedactsCommandError(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
 		if len(args) == 2 && args[0] == "run" && args[1] == "--help" {
@@ -286,7 +463,8 @@ func TestRunContainerRedactsCommandError(t *testing.T) {
 
 func TestRunContainerForceRemovesTimedOutContainerBeforeWorkspaceCleanup(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	root := t.TempDir()
 	writeWorkspaceFile(t, root, "sentinel", "unchanged")
@@ -342,7 +520,8 @@ func TestRunContainerForceRemovesTimedOutContainerBeforeWorkspaceCleanup(t *test
 
 func TestRunContainerChecksRuntimeBeforeWorkspaceCopy(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(string) (string, error) { return "", errors.New("runtime missing") }
 	commandFunc = func(_ context.Context, _ string, _ []string, _ int64) ([]byte, []byte, int, error) {
 		t.Fatal("runtime command must not run when runtime is unavailable")
@@ -361,7 +540,8 @@ func TestRunContainerChecksRuntimeBeforeWorkspaceCopy(t *testing.T) {
 
 func TestRunContainerAttemptsCleanupAfterRuntimeError(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	var cleanupCalled bool
 	commandFunc = func(_ context.Context, _ string, args []string, _ int64) ([]byte, []byte, int, error) {
@@ -405,7 +585,8 @@ func TestCommandHelperProcess(t *testing.T) {
 
 func TestRunContainerAllowNetworkRemovesOnlyNetworkRestriction(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(string) (string, error) { return "/fake/docker", nil }
 	var args []string
 	commandFunc = func(_ context.Context, _ string, got []string, _ int64) ([]byte, []byte, int, error) {
@@ -512,7 +693,8 @@ func TestLiveContainerTimeoutRemovesContainer(t *testing.T) {
 
 func TestLiveRuntimePinMatchesProbe(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(name string) (string, error) {
 		if name == "docker" || name == "podman" {
 			return "/fake/" + name, nil
@@ -584,7 +766,8 @@ func TestContainerForwardsLowEntropyEnvironmentWithoutUsingItAsRedactionPattern(
 
 func TestRunContainerRefusesUnsupportedPidsLimitBeforeUserScript(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(name string) (string, error) {
 		if name == "docker" {
 			return "/fake/docker", nil
@@ -625,7 +808,8 @@ func TestRunContainerRefusesUnsupportedPidsLimitBeforeUserScript(t *testing.T) {
 
 func TestRunContainerPidsLimitUnsupportedReportsWarning(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(name string) (string, error) {
 		if name == "docker" {
 			return "/fake/docker", nil
@@ -672,7 +856,8 @@ func TestRunContainerPidsLimitUnsupportedReportsWarning(t *testing.T) {
 
 func TestRunContainerDoesNotRetryRepositoryExit125(t *testing.T) {
 	oldLookPath, oldCommand := lookPath, commandFunc
-	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand })
+	resetContainerProbeCache()
+	t.Cleanup(func() { lookPath, commandFunc = oldLookPath, oldCommand; resetContainerProbeCache() })
 	lookPath = func(name string) (string, error) {
 		if name == "docker" {
 			return "/fake/docker", nil
