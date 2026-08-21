@@ -29,11 +29,16 @@ trap 'rm -rf "$workdir"' EXIT
 curl --fail --location --silent --show-error --output "$workdir/$asset" "${base}/${asset}"
 curl --fail --location --silent --show-error --output "$workdir/checksums.txt" "${base}/checksums.txt"
 cd "$workdir"
+checksum_line="$(grep -E "^[0-9a-fA-F]{64}  ${asset}$" checksums.txt || true)"
+if [[ -z "$checksum_line" ]]; then
+  echo "checksum entry missing for $asset" >&2
+  exit 1
+fi
 if [[ "${RUNNER_OS}" == "macOS" ]]; then
   # macOS ships shasum, not GNU sha256sum.
-  grep "  ${asset}$" checksums.txt | shasum -a 256 -c -
+  printf '%s\n' "$checksum_line" | shasum -a 256 -c -
 else
-  grep "  ${asset}$" checksums.txt | sha256sum -c -
+  printf '%s\n' "$checksum_line" | sha256sum -c -
 fi
 chmod +x "$asset"
 args=(doctor --format github)

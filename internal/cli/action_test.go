@@ -104,8 +104,12 @@ func TestActionUsesPortableWorkspaceSafeDownloadSteps(t *testing.T) {
 	}
 	actionText := read("action.yml")
 	entrypointText := read("scripts", "action-entrypoint.sh")
+	windowsEntrypointText := read("scripts", "action-entrypoint.ps1")
 	if !strings.Contains(actionText, `bash "$GITHUB_ACTION_PATH/scripts/action-entrypoint.sh"`) {
 		t.Fatal("Unix composite step does not delegate to the tested action entrypoint")
+	}
+	if !strings.Contains(actionText, `& "$env:GITHUB_ACTION_PATH\scripts\action-entrypoint.ps1"`) {
+		t.Fatal("Windows composite step does not delegate to the extracted PowerShell entrypoint")
 	}
 	if strings.Contains(actionText, "DEVPARITY_RELEASE_BASE") {
 		t.Fatal("composite action must not expose a release-base environment override")
@@ -117,14 +121,24 @@ func TestActionUsesPortableWorkspaceSafeDownloadSteps(t *testing.T) {
 		"runner.os != 'Windows'",
 		"runner.os == 'Windows'",
 		"shell: powershell",
-		"Invoke-WebRequest",
+	} {
+		if !strings.Contains(actionText, required) {
+			t.Fatalf("action missing Windows portable behavior %q", required)
+		}
+	}
+	for _, required := range []string{
+		"ReleaseBaseUrl",
+		"Windows-X64",
+		"devparity-windows-amd64.exe",
+		"Invoke-WebRequest -UseBasicParsing -Uri",
 		"Get-FileHash -Algorithm SHA256",
 		"Join-Path $env:RUNNER_TEMP",
 		"finally {",
 		"Remove-Item",
+		"doctor --format github",
 	} {
-		if !strings.Contains(actionText, required) {
-			t.Fatalf("action missing Windows portable behavior %q", required)
+		if !strings.Contains(windowsEntrypointText, required) {
+			t.Fatalf("Windows action entrypoint missing portable behavior %q", required)
 		}
 	}
 	for _, required := range []string{
@@ -137,7 +151,7 @@ func TestActionUsesPortableWorkspaceSafeDownloadSteps(t *testing.T) {
 		"trap 'rm -rf",
 		"--output \"$workdir/$asset\"",
 		"--output \"$workdir/checksums.txt\"",
-		"grep \"  ${asset}$\" checksums.txt | sha256sum -c -",
+		`^[0-9a-fA-F]{64}  ${asset}$`,
 		"GITHUB_WORKSPACE",
 		"doctor --format github",
 	} {
@@ -223,7 +237,7 @@ func TestReleaseWorkflowUsesReadOnlyBuildJobsAndPinnedActions(t *testing.T) {
 			t.Fatalf("workflow files still use mutable action reference %q", mutable)
 		}
 	}
-	if strings.Count(verifyText, "persist-credentials: false") != 2 ||
+	if strings.Count(verifyText, "persist-credentials: false") != 3 ||
 		strings.Count(releaseText, "persist-credentials: false") != 1 {
 		t.Fatal("all non-publish checkouts must disable persisted credentials")
 	}
@@ -367,12 +381,16 @@ func TestReleaseChecksumsUseBasenames(t *testing.T) {
 	verifyText := read("..", "..", ".github", "workflows", "verify.yml")
 
 	const manifestCommand = `(cd "$DEST" && sha256sum "${assets[@]}" > checksums.txt)`
-	const verifyCommand = `grep "  ${asset}$" checksums.txt | sha256sum -c -`
+	const bashVerifyPattern = `^[0-9a-fA-F]{64}  ${asset}$`
 	if !strings.Contains(buildText, manifestCommand) {
 		t.Fatalf("release builder does not generate basename checksums with %q", manifestCommand)
 	}
-	if !strings.Contains(entrypointText, verifyCommand) {
+	if !strings.Contains(entrypointText, bashVerifyPattern) {
 		t.Fatal("action entrypoint checksum verification no longer expects basename entries")
+	}
+	ps1Text := read("..", "..", "scripts", "action-entrypoint.ps1")
+	if !strings.Contains(ps1Text, `('^([0-9a-fA-F]{64})  ' + [regex]::Escape($asset) + '$')`) {
+		t.Fatal("Windows action entrypoint checksum verification no longer matches the shared basename contract")
 	}
 	if strings.Contains(releaseText+buildText, "sha256sum dist/* > dist/checksums.txt") {
 		t.Fatal("release workflow still writes dist-prefixed checksum paths")
@@ -459,7 +477,7 @@ func TestReleaseWaitsForAllVerificationGates(t *testing.T) {
 			t.Fatalf("verification workflow requests write-capable permission %q", forbidden)
 		}
 	}
-	if strings.Count(verifyText, "ref: ${{ github.sha }}") < 2 {
+	if strings.Count(verifyText, "ref: ${{ github.sha }}") < 3 {
 		t.Fatal("verification workflow does not check out the caller commit")
 	}
 	for _, gate := range []string{

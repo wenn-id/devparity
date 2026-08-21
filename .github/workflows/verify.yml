@@ -61,3 +61,43 @@ jobs:
       - run: go test -v ./...
         env:
           DEVPARITY_CONTAINER_TEST: "1"
+
+  windows-action-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: 1.26.5
+      - name: Build local release fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=v0.1.0-beta.1 DEST="$RUNNER_TEMP/devparity-dist" bash scripts/release-build.sh
+      - name: Run extracted Windows action entrypoint
+        shell: pwsh
+        env:
+          DEVPARITY_VERSION: v0.1.0-beta.1
+          DEVPARITY_STRICT: "false"
+          GITHUB_STEP_SUMMARY: ${{ runner.temp }}\devparity-step-summary.md
+          DIST: ${{ runner.temp }}\devparity-dist
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $server = Start-Process -FilePath python -ArgumentList @('-m', 'http.server', '8765', '--bind', '127.0.0.1', '--directory', $env:DIST) -PassThru
+          try {
+            for ($attempt = 0; $attempt -lt 20; $attempt++) {
+              try { Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8765/checksums.txt' | Out-Null; break } catch { Start-Sleep -Milliseconds 250 }
+              if ($attempt -eq 19) { throw 'local release fixture server did not start' }
+            }
+            $env:RUNNER_OS = 'Windows'
+            $env:RUNNER_ARCH = 'X64'
+            & "$env:GITHUB_WORKSPACE\scripts\action-entrypoint.ps1" 'http://127.0.0.1:8765'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Test-Path -LiteralPath $env:GITHUB_STEP_SUMMARY)) { throw 'doctor did not write the step summary' }
+            if ((Get-Item -LiteralPath $env:GITHUB_STEP_SUMMARY).Length -eq 0) { throw 'doctor step summary is empty' }
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
