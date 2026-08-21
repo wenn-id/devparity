@@ -324,7 +324,10 @@ func TestReleaseEmbedsVersionAndVerifiesEveryAsset(t *testing.T) {
 	for _, required := range []string{
 		`for target in \`,
 		"grep -a -F -- \"$VERSION\" \"${DEST}/${asset}\" >/dev/null",
-		`test "$("${DEST}/devparity-linux-amd64" version)" = "$VERSION"`,
+		`native_os="$(go env GOOS)"`,
+		`native_arch="$(go env GOARCH)"`,
+		`native_asset="devparity-${native_os}-${native_arch}"`,
+		`test "$("${DEST}/${native_asset}" version)" = "$VERSION"`,
 		`(cd "$DEST" && sha256sum "${assets[@]}" > checksums.txt)`,
 	} {
 		if !strings.Contains(text, required) {

@@ -45,7 +45,14 @@ for asset in "${assets[@]}"; do
 done
 
 # The native asset must report the version from its own subcommand.
-test "$("${DEST}/devparity-linux-amd64" version)" = "$VERSION"
+native_os="$(go env GOOS)"
+native_arch="$(go env GOARCH)"
+native_asset="devparity-${native_os}-${native_arch}"
+case "$native_os" in
+  darwin) native_asset="devparity-darwin-${native_arch}" ;;
+  windows) native_asset="devparity-windows-${native_arch}.exe" ;;
+esac
+test "$("${DEST}/${native_asset}" version)" = "$VERSION"
 
 # Generate a basename checksum manifest that the composite action verifies.
 (cd "$DEST" && sha256sum "${assets[@]}" > checksums.txt)
