@@ -5,10 +5,10 @@ type Severity string
 type FactKind string
 
 const (
-	StatusPass         Status   = "pass"
-	StatusFinding      Status   = "finding"
-	StatusSkipped      Status   = "skipped"
-	StatusInconclusive Status   = "inconclusive"
+	StatusPass         Status = "pass"
+	StatusFinding      Status = "finding"
+	StatusSkipped      Status = "skipped"
+	StatusInconclusive Status = "inconclusive"
 	// StatusNoEvidence marks a rule that had nothing to compare. It is
 	// distinct from StatusPass so "pass" always means a check that actually
 	// ran and verified something.
