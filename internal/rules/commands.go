@@ -72,7 +72,10 @@ func evaluateWorkflowDrift(facts []model.Fact) model.Finding {
 	}
 
 	if len(findingClasses) == 0 {
-		return finding("workflow-command-drift", model.SeverityWarning, model.StatusPass, "Documentation and workflow commands agree or are insufficient for comparison", nil, "No command authority is selected.")
+		if len(docs) == 0 && len(workflows) == 0 {
+			return finding("workflow-command-drift", model.SeverityInfo, model.StatusNoEvidence, "No documentation or workflow commands found to compare", nil, "No command authority is selected.")
+		}
+		return finding("workflow-command-drift", model.SeverityWarning, model.StatusPass, "Documentation and workflow commands agree", evidence, "No command authority is selected.")
 	}
 	return finding("workflow-command-drift", model.SeverityWarning, model.StatusFinding, fmt.Sprintf("Documentation and workflow commands differ for %s", strings.Join(findingClasses, ", ")), evidence, "Review the command difference; DevParity reports bounded, deduplicated evidence without choosing which command is correct.")
 }

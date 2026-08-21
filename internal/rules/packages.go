@@ -17,8 +17,11 @@ func evaluatePackageManager(facts []model.Fact) model.Finding {
 			managers[fact.Value] = struct{}{}
 		}
 	}
-	if len(managers) <= 1 {
-		return finding("package-manager-conflict", model.SeverityError, model.StatusPass, "Package-manager evidence agrees or is insufficient for comparison", evidence, "No package manager is selected as authoritative.")
+	if len(managers) == 0 {
+		return finding("package-manager-conflict", model.SeverityInfo, model.StatusNoEvidence, "No package-manager evidence found to compare", nil, "No package manager is selected as authoritative.")
+	}
+	if len(managers) == 1 {
+		return finding("package-manager-conflict", model.SeverityError, model.StatusPass, "Package-manager evidence agrees", evidence, "No package manager is selected as authoritative.")
 	}
 	values := make([]string, 0, len(managers))
 	for manager := range managers {

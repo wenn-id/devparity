@@ -146,6 +146,58 @@ func TestEvaluateIncompatibleHyphenRangeConflict(t *testing.T) {
 	}
 }
 
+func TestEvaluateZeroConstraintsIsNoEvidence(t *testing.T) {
+	finding := mustFinding(t, Evaluate(nil), "node-version-conflict")
+	if finding.Status != model.StatusNoEvidence {
+		t.Fatalf("finding=%#v, want no-evidence when there are zero constraints", finding)
+	}
+	if len(finding.Evidence) != 0 {
+		t.Fatalf("finding=%#v, want no evidence attached", finding)
+	}
+}
+
+func TestEvaluateSingleConstraintIsNoEvidence(t *testing.T) {
+	finding := mustFinding(t, Evaluate([]model.Fact{
+		fact("node.constraint", "node", "22", ".nvmrc", 1),
+	}), "node-version-conflict")
+	if finding.Status != model.StatusNoEvidence {
+		t.Fatalf("finding=%#v, want no-evidence when there is nothing to compare against", finding)
+	}
+}
+
+func TestEvaluateZeroPackageManagerEvidenceIsNoEvidence(t *testing.T) {
+	finding := mustFinding(t, Evaluate(nil), "package-manager-conflict")
+	if finding.Status != model.StatusNoEvidence {
+		t.Fatalf("finding=%#v, want no-evidence when there is no package-manager evidence", finding)
+	}
+}
+
+func TestEvaluateSinglePackageManagerStillPasses(t *testing.T) {
+	finding := mustFinding(t, Evaluate([]model.Fact{
+		fact("package.manager.declared", "package-manager", "npm", "package.json", 3),
+	}), "package-manager-conflict")
+	if finding.Status != model.StatusPass {
+		t.Fatalf("finding=%#v, want pass when evidence agrees", finding)
+	}
+}
+
+func TestEvaluateZeroCommandEvidenceIsNoEvidence(t *testing.T) {
+	finding := mustFinding(t, Evaluate(nil), "workflow-command-drift")
+	if finding.Status != model.StatusNoEvidence {
+		t.Fatalf("finding=%#v, want no-evidence when there are no commands to compare", finding)
+	}
+}
+
+func TestEvaluateAgreeingCommandsStillPass(t *testing.T) {
+	finding := mustFinding(t, Evaluate([]model.Fact{
+		fact("doc.command", "test", "npm test", "README.md", 8),
+		fact("workflow.command", "test", "npm test", ".github/workflows/ci.yml", 12),
+	}), "workflow-command-drift")
+	if finding.Status != model.StatusPass {
+		t.Fatalf("finding=%#v, want pass when commands agree", finding)
+	}
+}
+
 func mustFinding(t *testing.T, findings []model.Finding, ruleID string) model.Finding {
 	t.Helper()
 	for _, finding := range findings {

@@ -44,3 +44,18 @@ func TestSortFindingsUsesRuleIDAfterPathAndLine(t *testing.T) {
 		}
 	}
 }
+
+func TestSummarizeCountsNoEvidenceSeparatelyFromPass(t *testing.T) {
+	findings := []Finding{
+		{Status: StatusPass},
+		{Status: StatusNoEvidence},
+		{Status: StatusNoEvidence},
+		{Status: StatusFinding},
+		{Status: StatusInconclusive},
+		{Status: StatusSkipped},
+	}
+	summary := Summarize(findings)
+	if summary.Pass != 1 || summary.NoEvidence != 2 || summary.Finding != 1 || summary.Inconclusive != 1 || summary.Skipped != 1 {
+		t.Fatalf("summary=%#v, want no-evidence counted separately from pass", summary)
+	}
+}

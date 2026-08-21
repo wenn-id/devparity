@@ -16,6 +16,6 @@ func GitHub(w io.Writer, value model.Report) error {
 			return err
 		}
 	}
-	_, err := fmt.Fprintf(w, "\nSummary: pass=%d, finding=%d, skipped=%d, inconclusive=%d\n", value.Summary.Pass, value.Summary.Finding, value.Summary.Skipped, value.Summary.Inconclusive)
+	_, err := fmt.Fprintf(w, "\nSummary: pass=%d, finding=%d, skipped=%d, inconclusive=%d, no-evidence=%d\n", value.Summary.Pass, value.Summary.Finding, value.Summary.Skipped, value.Summary.Inconclusive, value.Summary.NoEvidence)
 	return err
 }
