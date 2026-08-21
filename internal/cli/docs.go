@@ -111,7 +111,7 @@ func runDocs(args []string, stdout, stderr io.Writer) int {
 			}
 			results := make([]model.ExecutionResult, 0, len(executableBlocks))
 			for _, block := range executableBlocks {
-				options := execute.Options{Root: value.Repository, Timeout: *timeout, EnvNames: envNames, Environment: &environment, AllowNetwork: *allowNetwork, NodeVersion: *nodeVersion, NodeImageDigest: *nodeImageDigest}
+				options := execute.Options{Root: path, Timeout: *timeout, EnvNames: envNames, Environment: &environment, AllowNetwork: *allowNetwork, NodeVersion: *nodeVersion, NodeImageDigest: *nodeImageDigest}
 				var result model.ExecutionResult
 				var runErr error
 				if *containerMode {
@@ -217,10 +217,12 @@ func staticDocsData(root string) (model.Report, []model.DocBlock, error) {
 	findings = append(findings, blockFindings...)
 	findings = append(findings, docs.Validate(blocks, facts)...)
 	model.SortFindings(findings)
+	// Keep the OS-native root for execution (Options.Root below) and only
+	// normalise separators at the reporting boundary, matching `doctor`.
 	return model.Report{
 		SchemaVersion: 1,
 		ToolVersion:   Version,
-		Repository:    artifacts.Root,
+		Repository:    filepath.ToSlash(artifacts.Root),
 		Summary:       model.Summarize(findings),
 		Results:       findings,
 	}, blocks, nil
