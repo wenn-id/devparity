@@ -39,9 +39,9 @@ try {
   Invoke-WebRequest -UseBasicParsing -Uri "$ReleaseBaseUrl/checksums.txt" -OutFile $checksums
 
   # Shared checksum contract with the bash entrypoint: exactly two spaces
-  # before the asset basename, then end-of-line.
+  # before the asset basename, then end-of-line (optionally CRLF).
   $checksumLine = Get-Content -LiteralPath $checksums |
-    Where-Object { $_ -match ('^([0-9a-fA-F]{64})  ' + [regex]::Escape($asset) + '$') } |
+    Where-Object { $_ -match ('^([0-9a-fA-F]{64})  ' + [regex]::Escape($asset) + '\r?$') } |
     Select-Object -First 1
   if (-not $checksumLine) { throw "checksum entry missing for $asset" }
   $expected = ($checksumLine -split '\s+', 2)[0].ToUpperInvariant()
