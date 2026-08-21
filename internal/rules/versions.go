@@ -25,7 +25,7 @@ func evaluateVersions(facts []model.Fact) model.Finding {
 		if len(constraints) == 0 {
 			return finding("node-version-conflict", model.SeverityInfo, model.StatusNoEvidence, "No Node version constraints found to compare", nil, "Declare Node versions in package.json engines, .nvmrc, docs, or CI files.")
 		}
-		return finding("node-version-conflict", model.SeverityInfo, model.StatusNoEvidence, "Only one Node version constraint found; nothing to compare", constraints, "No authoritative Node version is selected.")
+		return finding("node-version-conflict", model.SeverityInfo, model.StatusSkipped, "Only one Node version constraint found; nothing to compare", constraints, "Declare another Node constraint to enable a compatibility comparison.")
 	}
 	compatible, err := semverx.IntersectsAll(raw)
 	if err != nil {

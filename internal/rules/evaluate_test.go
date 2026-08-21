@@ -160,8 +160,30 @@ func TestEvaluateSingleConstraintIsNoEvidence(t *testing.T) {
 	finding := mustFinding(t, Evaluate([]model.Fact{
 		fact("node.constraint", "node", "22", ".nvmrc", 1),
 	}), "node-version-conflict")
+	if finding.Status != model.StatusSkipped {
+		t.Fatalf("finding=%#v, want skipped when a single constraint was collected but there is nothing to compare against", finding)
+	}
+	if len(finding.Evidence) != 1 {
+		t.Fatalf("finding=%#v, want the collected constraint attached as evidence", finding)
+	}
+}
+
+func TestEvaluateOneSidedCommandEvidenceIsNoEvidence(t *testing.T) {
+	finding := mustFinding(t, Evaluate([]model.Fact{
+		fact("doc.command", "test", "npm test", "README.md", 8),
+	}), "workflow-command-drift")
 	if finding.Status != model.StatusNoEvidence {
-		t.Fatalf("finding=%#v, want no-evidence when there is nothing to compare against", finding)
+		t.Fatalf("finding=%#v, want no-evidence when documentation commands have no workflow counterpart to compare against", finding)
+	}
+}
+
+func TestEvaluateDisjointCommandClassesAreNoEvidence(t *testing.T) {
+	finding := mustFinding(t, Evaluate([]model.Fact{
+		fact("doc.command", "lint", "npm run lint", "README.md", 8),
+		fact("workflow.command", "test:ci", "npm run test:ci", ".github/workflows/ci.yml", 12),
+	}), "workflow-command-drift")
+	if finding.Status != model.StatusNoEvidence {
+		t.Fatalf("finding=%#v, want no-evidence when documentation and workflow commands share no comparable class", finding)
 	}
 }
 
