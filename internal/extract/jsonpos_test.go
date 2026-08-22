@@ -40,12 +40,61 @@ func TestJSONFieldLinesRejectsDuplicateKeys(t *testing.T) {
 	for _, data := range []string{
 		`{"scripts":{"test":"a","test":"b"}}`,
 		`{"engines":{"node":"20"},"engines":{"node":"22"}}`,
+		`{"a":{"b":1,"b":2}}`,
 	} {
 		t.Run(data, func(t *testing.T) {
 			if _, err := jsonFieldLines([]byte(data)); err == nil {
 				t.Fatal("expected duplicate-key error")
 			}
 		})
+	}
+}
+
+func TestJSONFieldLinesAcceptsDottedKeyBesideNestedPath(t *testing.T) {
+	// A literal key containing "." must not collide with a nested path of
+	// the same flattened spelling; both entries are valid JSON.
+	got, err := jsonFieldLines([]byte("{\n  \"a.b\": 1,\n  \"a\": {\"b\": 2}\n}\n"))
+	if err != nil {
+		t.Fatalf("err=%v, want valid parse", err)
+	}
+	for _, key := range []string{"a.b", "a", "a.b"} {
+		if _, ok := got[key]; !ok {
+			t.Fatalf("lines=%#v, missing %q", got, key)
+		}
+	}
+}
+
+func TestJSONFieldLinesFormatsArraySegments(t *testing.T) {
+	got, err := jsonFieldLines([]byte("{\n  \"matrix\": [\n    {\"os\": \"linux\"},\n    {\"os\": \"windows\"}\n  ]\n}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Array items themselves carry no line entry (only keys do); their
+	// nested keys render as matrix[0].os, not matrix.[0].os.
+	for _, key := range []string{"matrix", "matrix[0].os", "matrix[1].os"} {
+		if _, ok := got[key]; !ok {
+			t.Fatalf("lines=%#v, missing %q", got, key)
+		}
+	}
+	// The old dotted ".[0]." spelling must be gone.
+	for key := range got {
+		if strings.Contains(key, ".[") {
+			t.Fatalf("lines=%#v, key %q uses the old bracket spelling", got, key)
+		}
+	}
+}
+
+func TestJSONFieldLinesClonesPaths(t *testing.T) {
+	// Sibling values under one object must not clobber each other through
+	// a shared backing array; this exercises the aliasing fix.
+	got, err := jsonFieldLines([]byte(`{"a":{"x":1,"y":2},"b":{"x":3,"y":4}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"a.x", "a.y", "b.x", "b.y"} {
+		if _, ok := got[key]; !ok {
+			t.Fatalf("lines=%#v, missing %q", got, key)
+		}
 	}
 }
 

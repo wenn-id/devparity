@@ -15,6 +15,10 @@ const (
 	maxJSONDepth          = 256
 )
 
+// jsonFieldLines maps dotted field paths to the line each key appears on.
+// Duplicate keys are detected per object (per nesting level), not on the
+// flattened dotted path, so a literal key containing "." cannot collide with
+// a nested path: {"a.b": 1, "a": {"b": 2}} is valid JSON and parses fine.
 func jsonFieldLines(data []byte) (map[string]int, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	lineStarts := buildLineStarts(data)
@@ -43,6 +47,7 @@ func parseJSONValue(decoder *json.Decoder, lineStarts []int, path []string, line
 	case json.Delim:
 		switch value {
 		case '{':
+			objectKeys := make(map[string]struct{})
 			for decoder.More() {
 				keyToken, err := decoder.Token()
 				if err != nil {
@@ -52,18 +57,26 @@ func parseJSONValue(decoder *json.Decoder, lineStarts []int, path []string, line
 				if !ok {
 					return fmt.Errorf("object key is not a string")
 				}
-				keyPath := appendPath(path, key)
+				// Duplicate detection is scoped to this object only: the
+				// same key in a sibling or parent object is not a duplicate.
+				if _, exists := objectKeys[key]; exists {
+					return fmt.Errorf("duplicate JSON key %q", key)
+				}
+				objectKeys[key] = struct{}{}
+				// Copy the path before appending: append on a slice with
+				// spare capacity writes into the shared backing array, and
+				// retaining a path across iterations would silently corrupt
+				// results.
+				childPath := append(clonePath(path), key)
+				keyPath := joinPath(childPath)
 				if len(keyPath) > maxJSONFieldPathBytes {
 					return fmt.Errorf("JSON field path exceeds maximum length %d bytes", maxJSONFieldPathBytes)
-				}
-				if _, exists := lines[keyPath]; exists {
-					return fmt.Errorf("duplicate JSON key %q", keyPath)
 				}
 				if len(lines) >= maxJSONFields {
 					return fmt.Errorf("JSON field count exceeds maximum %d", maxJSONFields)
 				}
 				lines[keyPath] = lineAt(lineStarts, decoder.InputOffset())
-				if err := parseJSONValue(decoder, lineStarts, append(path, key), lines, depth+1); err != nil {
+				if err := parseJSONValue(decoder, lineStarts, childPath, lines, depth+1); err != nil {
 					return err
 				}
 			}
@@ -77,7 +90,10 @@ func parseJSONValue(decoder *json.Decoder, lineStarts []int, path []string, line
 		case '[':
 			index := 0
 			for decoder.More() {
-				itemPath := append(path, fmt.Sprintf("[%d]", index))
+				// Array items render as a[0], a[1] — the index attaches to
+				// the previous segment rather than a separate dotted
+				// ".[0]." segment.
+				itemPath := append(clonePath(path), fmt.Sprintf("[%d]", index))
 				if err := parseJSONValue(decoder, lineStarts, itemPath, lines, depth+1); err != nil {
 					return err
 				}
@@ -97,11 +113,23 @@ func parseJSONValue(decoder *json.Decoder, lineStarts []int, path []string, line
 	return nil
 }
 
-func appendPath(path []string, part string) string {
+// clonePath copies path so appends never alias the caller's backing array.
+func clonePath(path []string) []string {
 	if len(path) == 0 {
-		return part
+		return nil
 	}
-	return strings.Join(path, ".") + "." + part
+	return append(make([]string, 0, len(path)+1), path...)
+}
+
+func joinPath(path []string) string {
+	var builder strings.Builder
+	for index, segment := range path {
+		if index > 0 && !strings.HasPrefix(segment, "[") {
+			builder.WriteByte('.')
+		}
+		builder.WriteString(segment)
+	}
+	return builder.String()
 }
 
 func buildLineStarts(data []byte) []int {
