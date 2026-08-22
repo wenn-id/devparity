@@ -52,7 +52,7 @@ The release workflow publishes signed GitHub build-provenance attestations for e
 gh attestation verify devparity-linux-amd64 --repo wenn-id/devparity
 ```
 
-The composite action performs both checks automatically. If no tagged release is available yet, build from source with the Go toolchain declared in `go.mod`:
+The release workflow and composite action use the same basename checksum manifest. The composite action performs both checks automatically. If no tagged release is available yet, build from source with the Go toolchain declared in `go.mod`:
 
 ```sh
 go build -trimpath -o devparity ./cmd/devparity
