@@ -4,12 +4,36 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 
 	"go.yaml.in/yaml/v3"
 )
+
+var workflowActionRef = regexp.MustCompile(`(?m)^\s*-\s+uses:\s+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)`)
+var immutableActionSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+func actionPins(text string) map[string]map[string]struct{} {
+	pins := make(map[string]map[string]struct{})
+	for _, match := range workflowActionRef.FindAllStringSubmatch(text, -1) {
+		if pins[match[1]] == nil {
+			pins[match[1]] = make(map[string]struct{})
+		}
+		pins[match[1]][match[2]] = struct{}{}
+	}
+	return pins
+}
+
+func assertActionsPinned(t *testing.T, text string) {
+	t.Helper()
+	for _, match := range workflowActionRef.FindAllStringSubmatch(text, -1) {
+		if !immutableActionSHA.MatchString(match[2]) {
+			t.Fatalf("workflow action %q is not pinned to a full commit SHA: %q", match[1], match[2])
+		}
+	}
+}
 
 func TestActionHasSafeCompositeInputs(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "action.yml"))
@@ -220,16 +244,27 @@ func TestReleaseWorkflowUsesReadOnlyBuildJobsAndPinnedActions(t *testing.T) {
 	verifyText := read("..", "..", ".github", "workflows", "verify.yml")
 	releaseText := read("..", "..", ".github", "workflows", "release.yml")
 
-	const (
-		checkout = "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"
-		setupGo  = "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
-		upload   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-		download = "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131"
-	)
 	allText := ciText + verifyText + releaseText
-	for _, action := range []string{checkout, setupGo, upload, download} {
-		if !strings.Contains(allText, action) {
+	assertActionsPinned(t, allText)
+	// Actions are pinned by immutable commit SHA, not by version. The exact
+	// SHA is intentionally not hardcoded here: Dependabot bumps it, and a
+	// test that pins the digest would fail every dependency update while
+	// proving nothing beyond "the digest is the one I typed". What matters
+	// is that every required action is present, pinned to a 40-hex SHA, and
+	// consistent across workflows.
+	pins := actionPins(allText)
+	for _, action := range []string{
+		"actions/checkout",
+		"actions/setup-go",
+		"actions/upload-artifact",
+		"actions/download-artifact",
+	} {
+		refs, ok := pins[action]
+		if !ok {
 			t.Fatalf("workflow files missing pinned action %q", action)
+		}
+		if len(refs) != 1 {
+			t.Fatalf("action %q is pinned to %d different SHAs %v; keep one pin per action", action, len(refs), refs)
 		}
 	}
 	for _, mutable := range []string{"actions/checkout@v", "actions/setup-go@v", "actions/upload-artifact@v", "actions/download-artifact@v"} {
@@ -678,7 +713,7 @@ func TestReleaseWaitsForAllVerificationGates(t *testing.T) {
 	if !strings.Contains(packageJob, "ref: ${{ github.sha }}") {
 		t.Fatal("release package job does not check out the caller commit")
 	}
-	if !strings.Contains(packageJob, "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a") || !strings.Contains(packageJob, "name: release-assets") {
+	if !strings.Contains(packageJob, "actions/upload-artifact@") || !strings.Contains(packageJob, "name: release-assets") {
 		t.Fatal("package job does not upload the release-assets artifact")
 	}
 	if !strings.Contains(publishJob, "needs: [verify, package]") {
@@ -687,7 +722,7 @@ func TestReleaseWaitsForAllVerificationGates(t *testing.T) {
 	if !strings.Contains(publishJob, "permissions:\n      contents: write") {
 		t.Fatal("publish job lacks isolated write permission")
 	}
-	if !strings.Contains(publishJob, "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131") || strings.Count(publishJob, "name: release-assets") != 1 {
+	if !strings.Contains(publishJob, "actions/download-artifact@") || strings.Count(publishJob, "name: release-assets") != 1 {
 		t.Fatal("publish job does not download exactly the release-assets artifact")
 	}
 	for _, forbidden := range []string{"actions/checkout@", "actions/setup-go@", "gofmt", "go test", "go build"} {
