@@ -201,7 +201,10 @@ func TestRunHostCapsOutputPerStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if int64(len(result.Stdout)) > 1<<20 {
+	if int64(len(result.Stdout)) > 1<<20+truncationMarkerMaxBytes {
 		t.Fatalf("stdout=%d bytes", len(result.Stdout))
+	}
+	if !strings.Contains(result.Stdout, "[devparity: output truncated at 1048576 bytes]") {
+		t.Fatalf("stdout tail=%q, want truncation marker", result.Stdout[len(result.Stdout)-80:])
 	}
 }

@@ -1,6 +1,7 @@
 package execute
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -337,8 +338,13 @@ func TestRunCommandCapsBothStreams(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("exit=%d", exit)
 	}
-	if int64(len(stdout)) > defaultMaxOutput || int64(len(stderr)) > defaultMaxOutput {
-		t.Fatalf("stdout=%d stderr=%d limit=%d", len(stdout), len(stderr), defaultMaxOutput)
+	// The cap applies to the captured output; a truncation marker may be
+	// appended on top of it and must be present exactly when the cap hit.
+	if !bytes.Contains(stdout, []byte("[devparity: output truncated at")) || !bytes.Contains(stderr, []byte("[devparity: output truncated at")) {
+		t.Fatalf("stdout=%q stderr=%q, want truncation marker", stdout, stderr)
+	}
+	if int64(len(stdout)) > defaultMaxOutput+truncationMarkerMaxBytes || int64(len(stderr)) > defaultMaxOutput+truncationMarkerMaxBytes {
+		t.Fatalf("stdout=%d stderr=%d limit=%d(+marker)", len(stdout), len(stderr), defaultMaxOutput)
 	}
 }
 
@@ -348,8 +354,11 @@ func TestRunCommandUsesConfiguredLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exit != 0 || len(stdout) > 64 || len(stderr) > 64 {
+	if exit != 0 || len(stdout) > 64+int(truncationMarkerMaxBytes) || len(stderr) > 64+int(truncationMarkerMaxBytes) {
 		t.Fatalf("exit=%d stdout=%d stderr=%d", exit, len(stdout), len(stderr))
+	}
+	if !bytes.Contains(stdout, []byte("[devparity: output truncated at 64 bytes]")) {
+		t.Fatalf("stdout=%q, want truncation marker naming the configured limit", stdout)
 	}
 }
 
@@ -641,8 +650,11 @@ node -e 'process.stderr.write("e".repeat(2 * 1024 * 1024))'
 		t.Fatalf("live container did not emit positive execution marker: result=%#v", result)
 	}
 	t.Logf("live-container-ran runtime=%s stdout_bytes=%d stderr_bytes=%d", runtimeName, len(result.Stdout), len(result.Stderr))
-	if result.Status != model.StatusPass || int64(len(result.Stdout)) > defaultMaxOutput || int64(len(result.Stderr)) > defaultMaxOutput {
+	if result.Status != model.StatusPass || int64(len(result.Stdout)) > defaultMaxOutput+truncationMarkerMaxBytes || int64(len(result.Stderr)) > defaultMaxOutput+truncationMarkerMaxBytes {
 		t.Fatalf("result=%#v", result)
+	}
+	if !strings.Contains(result.Stdout, "[devparity: output truncated at 1048576 bytes]") || !strings.Contains(result.Stderr, "[devparity: output truncated at 1048576 bytes]") {
+		t.Fatalf("live output missing truncation marker: stdout=%d stderr=%d", len(result.Stdout), len(result.Stderr))
 	}
 	if _, err := os.Stat(filepath.Join(root, "container-artifact")); !os.IsNotExist(err) {
 		t.Fatalf("container artifact leaked into original repository: %v", err)
