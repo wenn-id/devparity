@@ -1,15 +1,158 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 
 	"go.yaml.in/yaml/v3"
 )
+
+var immutableActionSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// splitActionRef splits "owner/repo/path@ref" into its action name and ref.
+// Local (./...) and Docker (docker://...) step references have no pinnable
+// ref and are reported as not an action.
+func splitActionRef(uses string) (name, ref string, ok bool) {
+	uses = strings.TrimSpace(uses)
+	if uses == "" || strings.HasPrefix(uses, "./") || strings.HasPrefix(uses, "docker://") {
+		return "", "", false
+	}
+	at := strings.LastIndex(uses, "@")
+	if at <= 0 || at == len(uses)-1 {
+		return uses, "", true // an action with no ref at all is still a finding
+	}
+	return uses[:at], uses[at+1:], true
+}
+
+// actionPins maps each third-party action to every ref it is pinned to across
+// the given workflows. Steps are read from parsed YAML, so both the compact
+// "- uses:" form and named steps with an indented "uses:" field are covered.
+func actionPins(t *testing.T, workflows map[string]string) map[string]map[string]struct{} {
+	t.Helper()
+	pins := make(map[string]map[string]struct{})
+	for _, steps := range allWorkflowSteps(t, workflows) {
+		for _, step := range steps {
+			name, ref, ok := splitActionRef(step.Uses)
+			if !ok {
+				continue
+			}
+			if pins[name] == nil {
+				pins[name] = make(map[string]struct{})
+			}
+			pins[name][ref] = struct{}{}
+		}
+	}
+	return pins
+}
+
+// allWorkflowSteps returns every job's steps keyed by "<workflow>/<job>".
+func allWorkflowSteps(t *testing.T, workflows map[string]string) map[string][]workflowStep {
+	t.Helper()
+	steps := make(map[string][]workflowStep)
+	for workflow, text := range workflows {
+		var parsed struct {
+			Jobs map[string]struct {
+				Steps []workflowStep `yaml:"steps"`
+			} `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal([]byte(text), &parsed); err != nil {
+			t.Fatalf("parse workflow %s: %v", workflow, err)
+		}
+		for job, jobData := range parsed.Jobs {
+			steps[workflow+"/"+job] = jobData.Steps
+		}
+	}
+	return steps
+}
+
+// assertActionsPinned requires every third-party action step in every job to
+// be pinned to a full 40-hex commit SHA.
+func assertActionsPinned(t *testing.T, workflows map[string]string) {
+	t.Helper()
+	for jobKey, steps := range allWorkflowSteps(t, workflows) {
+		for _, step := range steps {
+			name, ref, ok := splitActionRef(step.Uses)
+			if !ok {
+				continue
+			}
+			if !immutableActionSHA.MatchString(ref) {
+				t.Fatalf("%s: action %q is not pinned to a full commit SHA: %q", jobKey, name, ref)
+			}
+		}
+	}
+}
+
+// findActionStep returns the single step in steps using the named action.
+func findActionStep(t *testing.T, steps []workflowStep, action string) workflowStep {
+	t.Helper()
+	var found []workflowStep
+	for _, step := range steps {
+		if name, _, ok := splitActionRef(step.Uses); ok && name == action {
+			found = append(found, step)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("expected exactly one %q step, found %d", action, len(found))
+	}
+	return found[0]
+}
+
+// assertStepWith requires a step input to equal want.
+func assertStepWith(t *testing.T, step workflowStep, key, want string) {
+	t.Helper()
+	got, ok := step.With[key]
+	if !ok {
+		t.Fatalf("step %q is missing input %q", step.Uses, key)
+	}
+	if fmt.Sprint(got) != want {
+		t.Fatalf("step %q input %s=%v, want %q", step.Uses, key, got, want)
+	}
+}
+
+// TestWorkflowPinValidationCoversNamedSteps guards the pin governance itself:
+// a named step ("- name:" followed by an indented "uses:") must be visible to
+// the structural parser, so an unpinned action cannot hide behind a step name.
+func TestWorkflowPinValidationCoversNamedSteps(t *testing.T) {
+	workflow := `jobs:
+  verify:
+    steps:
+      - name: Named checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Named setup
+        uses: actions/setup-go@v5
+`
+	steps := allWorkflowSteps(t, map[string]string{"synthetic": workflow})["synthetic/verify"]
+	if len(steps) != 2 {
+		t.Fatalf("named steps=%#v, want 2 steps", steps)
+	}
+	name, ref, ok := splitActionRef(steps[0].Uses)
+	if !ok || name != "actions/checkout" || !immutableActionSHA.MatchString(ref) {
+		t.Fatalf("named step 0: name=%q ref=%q ok=%v, want SHA-pinned checkout", name, ref, ok)
+	}
+	name, ref, ok = splitActionRef(steps[1].Uses)
+	if !ok || name != "actions/setup-go" || immutableActionSHA.MatchString(ref) {
+		t.Fatalf("named step 1: name=%q ref=%q ok=%v, want mutable setup-go ref", name, ref, ok)
+	}
+	if _, ok := actionPins(t, map[string]string{"synthetic": workflow})["actions/setup-go"]; !ok {
+		t.Fatal("actionPins ignores named steps")
+	}
+}
+
+// TestSplitActionRefSkipsLocalAndDockerSteps documents that local composite
+// and Docker steps carry no pinnable commit SHA and must not be flagged.
+func TestSplitActionRefSkipsLocalAndDockerSteps(t *testing.T) {
+	for _, uses := range []string{"./.github/workflows/verify.yml", "docker://alpine:3.20", ""} {
+		if _, _, ok := splitActionRef(uses); ok {
+			t.Fatalf("uses=%q was treated as a pinnable action", uses)
+		}
+	}
+}
 
 func TestActionHasSafeCompositeInputs(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "action.yml"))
@@ -220,21 +363,40 @@ func TestReleaseWorkflowUsesReadOnlyBuildJobsAndPinnedActions(t *testing.T) {
 	verifyText := read("..", "..", ".github", "workflows", "verify.yml")
 	releaseText := read("..", "..", ".github", "workflows", "release.yml")
 
-	const (
-		checkout = "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"
-		setupGo  = "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
-		upload   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-		download = "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131"
-	)
-	allText := ciText + verifyText + releaseText
-	for _, action := range []string{checkout, setupGo, upload, download} {
-		if !strings.Contains(allText, action) {
-			t.Fatalf("workflow files missing pinned action %q", action)
+	workflows := map[string]string{
+		"ci":      ciText,
+		"verify":  verifyText,
+		"release": releaseText,
+	}
+	assertActionsPinned(t, workflows)
+	// Actions are pinned by immutable commit SHA, not by version. The exact
+	// SHA is intentionally not hardcoded here: Dependabot bumps it, and a
+	// test that pins the digest would fail every dependency update while
+	// proving nothing beyond "the digest is the one I typed". What matters
+	// is that each workflow still uses the actions it needs, that they are
+	// pinned to a 40-hex SHA, and that the pin is consistent repo-wide.
+	for workflow, required := range map[string][]string{
+		"verify":  {"actions/checkout", "actions/setup-go"},
+		"release": {"actions/checkout", "actions/setup-go", "actions/upload-artifact", "actions/download-artifact"},
+	} {
+		present := actionPins(t, map[string]string{workflow: workflows[workflow]})
+		for _, action := range required {
+			if _, ok := present[action]; !ok {
+				t.Fatalf("workflow %s is missing pinned action %q", workflow, action)
+			}
+		}
+	}
+	pins := actionPins(t, workflows)
+	for action, refs := range pins {
+		if len(refs) != 1 {
+			t.Fatalf("action %q is pinned to %d different SHAs %v; keep one pin per action", action, len(refs), refs)
 		}
 	}
 	for _, mutable := range []string{"actions/checkout@v", "actions/setup-go@v", "actions/upload-artifact@v", "actions/download-artifact@v"} {
-		if strings.Contains(allText, mutable) {
-			t.Fatalf("workflow files still use mutable action reference %q", mutable)
+		for workflow, text := range workflows {
+			if strings.Contains(text, mutable) {
+				t.Fatalf("workflow %s still uses mutable action reference %q", workflow, mutable)
+			}
 		}
 	}
 	if strings.Count(verifyText, "persist-credentials: false") != 3 ||
@@ -411,9 +573,10 @@ func TestReleaseSupplyChainHardening(t *testing.T) {
 }
 
 type workflowStep struct {
-	Run  string `yaml:"run"`
-	If   string `yaml:"if"`
-	Uses string `yaml:"uses"`
+	Run  string                 `yaml:"run"`
+	If   string                 `yaml:"if"`
+	Uses string                 `yaml:"uses"`
+	With map[string]interface{} `yaml:"with"`
 }
 
 func workflowJobSteps(t *testing.T, workflow, job string) []workflowStep {
@@ -678,18 +841,20 @@ func TestReleaseWaitsForAllVerificationGates(t *testing.T) {
 	if !strings.Contains(packageJob, "ref: ${{ github.sha }}") {
 		t.Fatal("release package job does not check out the caller commit")
 	}
-	if !strings.Contains(packageJob, "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a") || !strings.Contains(packageJob, "name: release-assets") {
-		t.Fatal("package job does not upload the release-assets artifact")
-	}
+	releaseSteps := workflowJobSteps(t, releaseText, "package")
+	uploadStep := findActionStep(t, releaseSteps, "actions/upload-artifact")
+	assertStepWith(t, uploadStep, "name", "release-assets")
+	assertStepWith(t, uploadStep, "path", "dist")
 	if !strings.Contains(publishJob, "needs: [verify, package]") {
 		t.Fatal("publish does not wait for verification and packaging")
 	}
 	if !strings.Contains(publishJob, "permissions:\n      contents: write") {
 		t.Fatal("publish job lacks isolated write permission")
 	}
-	if !strings.Contains(publishJob, "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131") || strings.Count(publishJob, "name: release-assets") != 1 {
-		t.Fatal("publish job does not download exactly the release-assets artifact")
-	}
+	publishSteps := workflowJobSteps(t, releaseText, "publish")
+	downloadStep := findActionStep(t, publishSteps, "actions/download-artifact")
+	assertStepWith(t, downloadStep, "name", "release-assets")
+	assertStepWith(t, downloadStep, "path", "dist")
 	for _, forbidden := range []string{"actions/checkout@", "actions/setup-go@", "gofmt", "go test", "go build"} {
 		if strings.Contains(publishJob, forbidden) {
 			t.Fatalf("publish job must not contain %q", forbidden)
