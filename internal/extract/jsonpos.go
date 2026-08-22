@@ -23,7 +23,7 @@ func jsonFieldLines(data []byte) (map[string]int, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	lineStarts := buildLineStarts(data)
 	lines := make(map[string]int)
-	if err := parseJSONValue(decoder, lineStarts, nil, lines, 0, nil); err != nil {
+	if err := parseJSONValue(decoder, lineStarts, nil, lines, 0); err != nil {
 		return nil, err
 	}
 	if _, err := decoder.Token(); err == nil {
@@ -34,7 +34,7 @@ func jsonFieldLines(data []byte) (map[string]int, error) {
 	return lines, nil
 }
 
-func parseJSONValue(decoder *json.Decoder, lineStarts []int, path []string, lines map[string]int, depth int, seenKeys map[string]struct{}) error {
+func parseJSONValue(decoder *json.Decoder, lineStarts []int, path []string, lines map[string]int, depth int) error {
 	if depth > maxJSONDepth {
 		return fmt.Errorf("JSON nesting depth exceeds maximum %d", maxJSONDepth)
 	}
@@ -76,7 +76,7 @@ func parseJSONValue(decoder *json.Decoder, lineStarts []int, path []string, line
 					return fmt.Errorf("JSON field count exceeds maximum %d", maxJSONFields)
 				}
 				lines[keyPath] = lineAt(lineStarts, decoder.InputOffset())
-				if err := parseJSONValue(decoder, lineStarts, childPath, lines, depth+1, objectKeys); err != nil {
+				if err := parseJSONValue(decoder, lineStarts, childPath, lines, depth+1); err != nil {
 					return err
 				}
 			}
@@ -94,7 +94,7 @@ func parseJSONValue(decoder *json.Decoder, lineStarts []int, path []string, line
 				// the previous segment rather than a separate dotted
 				// ".[0]." segment.
 				itemPath := append(clonePath(path), fmt.Sprintf("[%d]", index))
-				if err := parseJSONValue(decoder, lineStarts, itemPath, lines, depth+1, nil); err != nil {
+				if err := parseJSONValue(decoder, lineStarts, itemPath, lines, depth+1); err != nil {
 					return err
 				}
 				index++
