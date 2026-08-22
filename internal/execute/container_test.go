@@ -650,8 +650,11 @@ node -e 'process.stderr.write("e".repeat(2 * 1024 * 1024))'
 		t.Fatalf("live container did not emit positive execution marker: result=%#v", result)
 	}
 	t.Logf("live-container-ran runtime=%s stdout_bytes=%d stderr_bytes=%d", runtimeName, len(result.Stdout), len(result.Stderr))
-	if result.Status != model.StatusPass || int64(len(result.Stdout)) > defaultMaxOutput || int64(len(result.Stderr)) > defaultMaxOutput {
+	if result.Status != model.StatusPass || int64(len(result.Stdout)) > defaultMaxOutput+truncationMarkerMaxBytes || int64(len(result.Stderr)) > defaultMaxOutput+truncationMarkerMaxBytes {
 		t.Fatalf("result=%#v", result)
+	}
+	if !strings.Contains(result.Stdout, "[devparity: output truncated at 1048576 bytes]") || !strings.Contains(result.Stderr, "[devparity: output truncated at 1048576 bytes]") {
+		t.Fatalf("live output missing truncation marker: stdout=%d stderr=%d", len(result.Stdout), len(result.Stderr))
 	}
 	if _, err := os.Stat(filepath.Join(root, "container-artifact")); !os.IsNotExist(err) {
 		t.Fatalf("container artifact leaked into original repository: %v", err)
