@@ -13,11 +13,9 @@ const maxMarkdownEvidenceBytes int64 = 1 << 20
 
 var nodeRequirementPrefix = regexp.MustCompile(`(?i)\bnode(?:\.js)?\s+(?:version\s+)?`)
 
-// nodeConstraintValue captures the version text that follows the Node
-// keyword. The value character class deliberately includes "+", so an
-// open-ended prose constraint such as "Node 18+" keeps its suffix instead of
-// being truncated to the bare major "18".
-var nodeConstraintValue = regexp.MustCompile(`(?i)^(v?(?:[0-9xX*][0-9A-Za-z.*xX^~<>=|+ -]*|[<>=~^|]+[0-9xX*][0-9A-Za-z.*xX^~<>=|+ -]*))`)
+// nodeConstraintValue captures only supported constraint characters. Letters
+// other than wildcard x and version-prefix v terminate the value as prose.
+var nodeConstraintValue = regexp.MustCompile(`(?i)^(v?(?:[0-9x*][0-9xv.*^~<>=|+ -]*|[<>=~^|]+[0-9x*][0-9xv.*^~<>=|+ -]*))`)
 
 // bareMajorConstraint matches a constraint that is exactly one number, which
 // is the only base we can safely turn from "N+" into ">=N".

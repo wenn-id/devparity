@@ -66,6 +66,20 @@ func TestMarkdownVersions(t *testing.T) {
 			contents: "Requires Node 18.4.1+ exactly.\n",
 		},
 		{
+			name:      "trailing prose does not pollute constraint",
+			contents:  "Node 20 is required for this project.\n",
+			wantValue: "20",
+			wantLine:  1,
+			wantFacts: 1,
+		},
+		{
+			name:      "range with trailing prose",
+			contents:  "Requires Node.js 18.0.0 or newer.\n",
+			wantValue: "18.0.0",
+			wantLine:  1,
+			wantFacts: 1,
+		},
+		{
 			name:      "fenced code blocks are skipped",
 			contents:  "```bash\nNode.js 16 is mentioned in a fenced block.\n```\n\nNode 20.\n",
 			wantValue: "20",
