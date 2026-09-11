@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: github/codeql-action/init@9ee088e13615f8d1eaef4766f9dde95d3356a8f6
+      - uses: github/codeql-action/init@14c568a92663d5bba4fc64d9a8d97c0e00e015a2
         with:
           languages: go
       - uses: github/codeql-action/autobuild@9ee088e13615f8d1eaef4766f9dde95d3356a8f6
