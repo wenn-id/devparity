@@ -25,7 +25,7 @@ jobs:
       - uses: github/codeql-action/init@9ee088e13615f8d1eaef4766f9dde95d3356a8f6
         with:
           languages: go
-      - uses: github/codeql-action/autobuild@9ee088e13615f8d1eaef4766f9dde95d3356a8f6
+      - uses: github/codeql-action/autobuild@14c568a92663d5bba4fc64d9a8d97c0e00e015a2
       - uses: github/codeql-action/analyze@9ee088e13615f8d1eaef4766f9dde95d3356a8f6
         with:
           category: "/language:go"
