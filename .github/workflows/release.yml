@@ -36,7 +36,7 @@ jobs:
           set -euo pipefail
           VERSION="$VERSION" DEST=dist bash scripts/release-build.sh
       - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c
         with:
           path: dist
           format: spdx-json
